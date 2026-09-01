@@ -9,6 +9,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
 import { requireParticipant } from "../middleware/requireParticipant.js";
+import { isConnected } from "../ws/connectionManager.js";
 import type { Participant } from "@prisma/client";
 
 export const roomDetailRouter = Router();
@@ -91,7 +92,10 @@ roomDetailRouter.get("/:id", requireParticipant, async (req, res) => {
         positionSecs: room.positionSecs,
         stateUpdatedAt: room.stateUpdatedAt ?? null,
       },
-      participants: room.participants,
+      participants: room.participants.map((p) => ({
+          ...p,
+          isOnline: isConnected(p.id),
+        })),
       ...(pendingJoinRequests !== undefined && { pendingJoinRequests }),
     },
   });

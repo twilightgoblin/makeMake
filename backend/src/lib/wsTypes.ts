@@ -93,6 +93,8 @@ export type ServerEventType =
   | "USER_LEFT"
   | "HOST_CHANGED"
   | "ROOM_CLOSED"
+  | "JOIN_REQUEST"
+  | "JOIN_REQUEST_RESOLVED"
   | "ERROR";
 
 export interface ServerEnvelope<T = unknown> {
@@ -200,6 +202,34 @@ export interface HostChangedPayload {
 }
 
 export type RoomClosedPayload = Record<string, never>;
+
+/** Sent to the HOST when a new join request arrives. */
+export interface JoinRequestPayload {
+  joinRequest: {
+    id: string;
+    displayName: string;
+    status: "PENDING";
+    roomId: string;
+    createdAt: ISOTimestamp;
+  };
+}
+
+/**
+ * Sent to the requesting participant after the HOST accepts or rejects.
+ * Also broadcast to the full room on ACCEPT so everyone sees the new member
+ * before the WS handshake completes.
+ */
+export interface JoinRequestResolvedPayload {
+  joinRequestId: string;
+  action: "ACCEPTED" | "REJECTED";
+  /** Present only when action === "ACCEPTED" */
+  participant?: {
+    id: string;
+    displayName: string;
+    role: "HOST" | "MEMBER";
+    roomId: string;
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Error event

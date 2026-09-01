@@ -2,6 +2,7 @@
 // Makemake — Join-request routes
 //
 // POST  /rooms/:code/join-requests          — guest submits a join request
+// GET   /rooms/:code/join-requests/:id      — requester polls their status
 // PATCH /rooms/:id/join-requests/:requestId — host accepts or rejects
 // -----------------------------------------------------------------------------
 
@@ -11,6 +12,16 @@ import { validateDisplayName } from "../lib/validate.js";
 import { notFound, conflict, unprocessable, AppError } from "../lib/errors.js";
 import { requireParticipant } from "../middleware/requireParticipant.js";
 import { requireHost } from "../middleware/requireHost.js";
+import {
+  getRoomConnections,
+  sendTo,
+  broadcastToRoom,
+} from "../ws/connectionManager.js";
+import {
+  makeServerEvent,
+  type JoinRequestPayload,
+  type JoinRequestResolvedPayload,
+} from "../lib/wsTypes.js";
 
 export const joinRequestsRouter = Router();
 
@@ -71,6 +82,22 @@ joinRequestsRouter.post("/:code/join-requests", async (req, res) => {
     },
   });
 
+  // Notify the HOST via WebSocket if they are currently connected.
+  const roomConnections = getRoomConnections(room.id);
+  const hostConnection = roomConnections.find((c) => c.role === "HOST");
+  if (hostConnection) {
+    const payload: JoinRequestPayload = {
+      joinRequest: {
+        id: joinRequest.id,
+        displayName: joinRequest.displayName,
+        status: "PENDING",
+        roomId: joinRequest.roomId,
+        createdAt: joinRequest.createdAt.toISOString(),
+      },
+    };
+    sendTo(hostConnection.socket, makeServerEvent("JOIN_REQUEST", payload));
+  }
+
   res.status(201).json({
     joinRequest: {
       id: joinRequest.id,
@@ -79,6 +106,63 @@ joinRequestsRouter.post("/:code/join-requests", async (req, res) => {
       roomId: joinRequest.roomId,
       createdAt: joinRequest.createdAt,
     },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /rooms/:code/join-requests/:requestId
+//
+// The requester polls this to check if they have been accepted or rejected.
+// No authentication required — the requester has no participant identity yet.
+//
+// Returns: 200 { joinRequest: { id, displayName, status, roomId, createdAt, resolvedAt } }
+//
+// Errors:
+//   404 NOT_FOUND — no room with that code, or request not in that room
+// ---------------------------------------------------------------------------
+
+joinRequestsRouter.get("/:code/join-requests/:requestId", async (req, res) => {
+  const code = String(req.params["code"]);
+  const requestId = String(req.params["requestId"]);
+
+  const room = await prisma.room.findUnique({ where: { code } });
+  if (!room) {
+    throw notFound("Room");
+  }
+
+  const joinRequest = await prisma.joinRequest.findFirst({
+    where: { id: requestId, roomId: room.id },
+  });
+
+  if (!joinRequest) {
+    throw notFound("Join request");
+  }
+
+  // When accepted, look up the participant row so the joiner can get their id.
+  let participant: { id: string; role: string } | null = null;
+  if (joinRequest.status === "ACCEPTED") {
+    participant = await prisma.participant.findFirst({
+      where: { roomId: room.id, displayName: joinRequest.displayName, leftAt: null },
+      select: { id: true, role: true },
+    });
+  }
+
+  res.json({
+    joinRequest: {
+      id: joinRequest.id,
+      displayName: joinRequest.displayName,
+      status: joinRequest.status,
+      roomId: joinRequest.roomId,
+      createdAt: joinRequest.createdAt,
+      resolvedAt: joinRequest.resolvedAt,
+    },
+    ...(participant && {
+      participant: {
+        id: participant.id,
+        role: participant.role,
+        roomId: room.id,
+      },
+    }),
   });
 });
 
@@ -138,6 +222,10 @@ joinRequestsRouter.patch(
         data: { status: "REJECTED", resolvedAt: new Date() },
       });
 
+      // The requester polls for status — no WS notification needed since
+      // they have no participant identity and no socket yet. The poll
+      // endpoint will return REJECTED on their next check.
+
       return res.json({
         joinRequest: {
           id: updated.id,
@@ -172,6 +260,21 @@ joinRequestsRouter.patch(
 
       return { updatedRequest, participant };
     });
+
+    // Broadcast JOIN_REQUEST_RESOLVED to everyone currently in the room so
+    // existing participants know someone was accepted (they'll see them on
+    // WS USER_JOINED once the new participant connects their socket).
+    const resolvedPayload: JoinRequestResolvedPayload = {
+      joinRequestId: updatedRequest.id,
+      action: "ACCEPTED",
+      participant: {
+        id: participant.id,
+        displayName: participant.displayName,
+        role: participant.role as "HOST" | "MEMBER",
+        roomId: participant.roomId,
+      },
+    };
+    broadcastToRoom(roomId, makeServerEvent("JOIN_REQUEST_RESOLVED", resolvedPayload));
 
     res.json({
       joinRequest: {

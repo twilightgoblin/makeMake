@@ -103,3 +103,18 @@ export async function createParticipant(
 export async function deleteRoom(roomId: string): Promise<void> {
   await prisma.room.delete({ where: { id: roomId } }).catch(() => {/* already gone */});
 }
+
+/**
+ * Creates a pending join request for a room (by code) and returns its id.
+ * Bypasses HTTP so tests that don't care about the POST flow can skip it.
+ */
+export async function createJoinRequest(
+  roomId: string,
+  displayName: string,
+): Promise<{ id: string; displayName: string; status: string; roomId: string }> {
+  const jr = await prisma.joinRequest.create({
+    data: { roomId, displayName },
+    select: { id: true, displayName: true, status: true, roomId: true },
+  });
+  return jr;
+}

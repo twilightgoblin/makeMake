@@ -8,6 +8,10 @@ export default defineConfig({
     proxy: {
       '/songs': 'http://localhost:3000',
       '/rooms': 'http://localhost:3000',
+      '/ws': {
+        target: 'ws://localhost:3000',
+        ws: true,
+      },
     },
   },
 })

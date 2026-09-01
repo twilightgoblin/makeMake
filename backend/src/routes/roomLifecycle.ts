@@ -15,6 +15,12 @@ import { prisma } from "../lib/prisma.js";
 import { requireParticipant } from "../middleware/requireParticipant.js";
 import { requireHost } from "../middleware/requireHost.js";
 import { AppError, notFound } from "../lib/errors.js";
+import {
+  isConnected,
+  updateRole,
+  broadcastToRoom,
+} from "../ws/connectionManager.js";
+import { makeServerEvent } from "../lib/wsTypes.js";
 import type { Participant } from "@prisma/client";
 
 export const roomLifecycleRouter = Router();
@@ -100,6 +106,15 @@ roomLifecycleRouter.patch(
       data: { leftAt: now },
     });
 
+    // Broadcast USER_LEFT so connected clients update their participant list.
+    broadcastToRoom(
+      roomId,
+      makeServerEvent("USER_LEFT", {
+        participantId,
+        displayName: caller.displayName,
+      }),
+    );
+
     // Find remaining active participants in join-order.
     const remaining = await prisma.participant.findMany({
       where: { roomId, leftAt: null },
@@ -117,12 +132,34 @@ roomLifecycleRouter.patch(
         data: { status: "INACTIVE" },
       });
     } else if (caller.role === "HOST") {
-      // HOST left but others remain → transfer to earliest-joined.
-      newHost = remaining[0]!;
+      // HOST left but others remain → transfer to earliest-joined *connected* participant.
+      // Prefer someone with an active WebSocket; fall back to any DB member.
+      const connectedRemaining = remaining.filter((p) => isConnected(p.id));
+      const candidates = connectedRemaining.length > 0 ? connectedRemaining : remaining;
+      newHost = candidates[0]!;
+
       await prisma.participant.update({
         where: { id: newHost.id },
         data: { role: "HOST" },
       });
+
+      // Demote the leaving participant in DB (they may reconnect later as MEMBER)
+      await prisma.participant.update({
+        where: { id: participantId },
+        data: { role: "MEMBER" },
+      });
+
+      // Sync in-memory role cache
+      updateRole(newHost.id, "HOST");
+
+      // Broadcast HOST_CHANGED so connected clients update immediately
+      broadcastToRoom(
+        roomId,
+        makeServerEvent("HOST_CHANGED", {
+          newHostId: newHost.id,
+          newHostDisplayName: newHost.displayName,
+        }),
+      );
     }
 
     res.json({
