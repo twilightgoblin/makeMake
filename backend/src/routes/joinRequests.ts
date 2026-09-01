@@ -24,7 +24,16 @@ import {
   type JoinRequestResolvedPayload,
 } from "../lib/wsTypes.js";
 
+import { rateLimit } from "../middleware/rateLimit.js";
+
 export const joinRequestsRouter = Router();
+
+// Rate limiter for join requests: 10 requests per minute per IP + room code
+const joinRequestLimiter = rateLimit({
+  limit: 10,
+  windowMs: 60 * 1000,
+  keyGenerator: (req) => `rate-limit:join-request:${req.params["code"]}:${req.ip}`,
+});
 
 // ---------------------------------------------------------------------------
 // POST /rooms/:code/join-requests
@@ -42,7 +51,7 @@ export const joinRequestsRouter = Router();
 //   409 PENDING_REQUEST_EXISTS — they already have a pending request
 // ---------------------------------------------------------------------------
 
-joinRequestsRouter.post("/:code/join-requests", async (req, res) => {
+joinRequestsRouter.post("/:code/join-requests", joinRequestLimiter, async (req, res) => {
   const code = String(req.params["code"]);
   const displayName = validateDisplayName(req.body?.displayName);
 

@@ -262,6 +262,7 @@ export type WsErrorCode =
   | "SONG_NOT_FOUND"
   | "PLAYLIST_ENTRY_NOT_FOUND"
   | "SEEK_OUT_OF_RANGE"
+  | "RATE_LIMITED"
   | "INTERNAL_ERROR";
 
 export interface WsErrorPayload {

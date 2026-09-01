@@ -9,7 +9,16 @@ import { validateDisplayName } from "../lib/validate.js";
 import { generateRoomCode } from "../lib/roomCode.js";
 import { conflict } from "../lib/errors.js";
 
+import { rateLimit } from "../middleware/rateLimit.js";
+
 export const roomsRouter = Router();
+
+// Rate limiter for room creation: 5 requests per minute per IP
+const createRoomLimiter = rateLimit({
+  limit: 5,
+  windowMs: 60 * 1000,
+  keyGenerator: (req) => `rate-limit:create-room:${req.ip}`,
+});
 
 // ---------------------------------------------------------------------------
 // POST /rooms
@@ -17,7 +26,7 @@ export const roomsRouter = Router();
 // Response 201: { room: { id, code, status }, participant: { id, displayName, role } }
 // ---------------------------------------------------------------------------
 
-roomsRouter.post("/", async (req, res) => {
+roomsRouter.post("/", createRoomLimiter, async (req, res) => {
   const displayName = validateDisplayName(req.body?.displayName);
 
   // Generate a unique room code — retry up to 5 times on the (extremely rare)

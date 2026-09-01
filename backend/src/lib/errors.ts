@@ -59,3 +59,10 @@ export const conflict = (code: string, message: string) =>
 
 export const unprocessable = (code: string, message: string) =>
   new AppError(422, code, message);
+
+// ---------------------------------------------------------------------------
+// 429
+// ---------------------------------------------------------------------------
+
+export const tooManyRequests = (message: string = "Too many requests.") =>
+  new AppError(429, "RATE_LIMITED", message);

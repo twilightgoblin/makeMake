@@ -180,5 +180,6 @@ model Message {
   senderId String
   sender   Participant @relation(fields: [senderId], references: [id])
 
+  @@index([roomId, sentAt(sort: Desc), id(sort: Desc)])
   @@map("messages")
 }

@@ -19,6 +19,7 @@ import {
 } from "../../lib/wsTypes.js";
 import { sendTo } from "../connectionManager.js";
 import { publishRoomEvent } from "../../lib/roomEvents.js";
+import { wsRateLimit } from "../rateLimit.js";
 
 const MAX_CONTENT_LENGTH = 1000;
 
@@ -28,6 +29,12 @@ export async function handleChat(
   roomId: string,
   envelope: ClientEnvelope,
 ): Promise<void> {
+  // Rate limit: 20 chat messages per minute per participant
+  const key = `rate-limit:chat:${participantId}`;
+  if (!(await wsRateLimit(socket, key, 20, 60 * 1000))) {
+    return;
+  }
+
   const payload = envelope.payload as ChatMessagePayload;
 
   // -------------------------------------------------------------------------

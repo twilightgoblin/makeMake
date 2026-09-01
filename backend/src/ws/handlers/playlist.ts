@@ -23,6 +23,7 @@ import {
   type PlaylistReorderBroadcastPayload,
 } from "../../lib/wsTypes.js";
 import { sendTo } from "../connectionManager.js";
+import { wsRateLimit } from "../rateLimit.js";
 import { publishRoomEvent } from "../../lib/roomEvents.js";
 
 export async function handlePlaylist(
@@ -31,6 +32,12 @@ export async function handlePlaylist(
   roomId: string,
   envelope: ClientEnvelope,
 ): Promise<void> {
+  // Rate limit: 30 playlist operations per minute per participant
+  const key = `rate-limit:playlist:${participantId}`;
+  if (!(await wsRateLimit(socket, key, 30, 60 * 1000))) {
+    return;
+  }
+
   switch (envelope.type) {
     case "PLAYLIST_ADD":
       await handleAdd(socket, participantId, roomId, envelope);
