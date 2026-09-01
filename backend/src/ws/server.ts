@@ -13,8 +13,11 @@ import { WebSocketServer } from "ws";
 import type { Server as HttpServer } from "http";
 import { handleConnection } from "./handlers/connection.js";
 
+let wss: WebSocketServer | null = null;
+
 export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  const wssInstance = new WebSocketServer({ noServer: true });
+  wss = wssInstance;
 
   // Handle the HTTP → WS upgrade handshake.
   httpServer.on("upgrade", (req, socket, head) => {
@@ -26,12 +29,12 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
       return;
     }
 
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
+    wssInstance.handleUpgrade(req, socket, head, (ws) => {
+      wssInstance.emit("connection", ws, req);
     });
   });
 
-  wss.on("connection", (socket, req) => {
+  wssInstance.on("connection", (socket, req) => {
     // Delegate to the connection handler — all errors are caught inside.
     handleConnection(socket, req).catch((err) => {
       console.error("[ws] unhandled connection error", err);
@@ -39,10 +42,19 @@ export function attachWebSocketServer(httpServer: HttpServer): WebSocketServer {
     });
   });
 
-  wss.on("error", (err) => {
+  wssInstance.on("error", (err) => {
     console.error("[ws] WebSocketServer error", err);
   });
 
   console.log("[ws] WebSocket server attached on /ws");
-  return wss;
+  return wssInstance;
+}
+
+export function closeAllWebSockets(): void {
+  if (!wss) return;
+  for (const client of wss.clients) {
+    if (client.readyState === client.OPEN) {
+      client.close(1012, "Service Restart");
+    }
+  }
 }

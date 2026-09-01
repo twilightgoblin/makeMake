@@ -1,9 +1,10 @@
 import "dotenv/config";
 import express from "express";
 import { prisma } from "./lib/prisma.js";
-import { attachWebSocketServer } from "./ws/server.js";
+import { attachWebSocketServer, closeAllWebSockets } from "./ws/server.js";
 import { subscribeRoomEvents } from "./lib/roomEvents.js";
 import { configureRoomExpiry, subscribeRoomExpiry, rearmInactiveRooms } from "./lib/roomExpiry.js";
+import { closeRedisConnections } from "./lib/redis.js";
 
 // Routers
 import { roomsRouter } from "./routes/rooms.js";
@@ -30,19 +31,25 @@ configureRoomExpiry(Number(process.env["ROOM_INACTIVE_TTL_SECS"] ?? 300));
 
 app.use(express.json());
 
+let _isShuttingDown = false;
+
 // ----------------------------------------------------------------------------
-// Health check
+// Health / Readiness
 // ----------------------------------------------------------------------------
-app.get("/health", async (_req, res) => {
-  if (!isReady()) {
-    res.status(503).json({ status: "starting" });
+app.get("/health", (_req, res) => {
+  res.json({ status: "alive" });
+});
+
+app.get("/ready", async (_req, res) => {
+  if (!isReady() || _isShuttingDown) {
+    res.status(503).json({ status: _isShuttingDown ? "shutting_down" : "starting" });
     return;
   }
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: "ok", db: "connected" });
   } catch (err) {
-    console.error("[health] DB connection failed:", err);
+    console.error("[ready] DB connection failed:", err);
     res.status(503).json({ status: "error", db: "disconnected" });
   }
 });
@@ -119,3 +126,47 @@ export function isReady(): boolean { return _ready; }
     _ready = true; // still mark ready so health check doesn't block forever
   }
 })();
+
+// ----------------------------------------------------------------------------
+// Graceful Shutdown (Phase 8.7)
+// ----------------------------------------------------------------------------
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  _isShuttingDown = true; // mark /ready as 503
+
+  console.log(`\n[shutdown] Received ${signal}, starting graceful shutdown...`);
+
+  // Allow LB to notice the 503 and stop routing new requests before we drain
+  await new Promise(resolve => setTimeout(resolve, 2000));
+
+  // Timeout to forcefully exit if graceful shutdown takes too long
+  setTimeout(() => {
+    console.error("[shutdown] Graceful shutdown timed out after 10s, forcing exit");
+    process.exit(1);
+  }, 10000).unref();
+
+  // 1. Stop accepting new HTTP connections (and wait for active ones to drain)
+  console.log("[shutdown] Closing HTTP server...");
+  httpServer.close();
+
+  // 2. Close all active WebSockets gracefully
+  console.log("[shutdown] Closing WebSockets...");
+  closeAllWebSockets();
+
+  // 3. Close Redis connections
+  console.log("[shutdown] Disconnecting Redis...");
+  await closeRedisConnections();
+
+  // 4. Disconnect Prisma
+  console.log("[shutdown] Disconnecting PostgreSQL...");
+  await prisma.$disconnect();
+
+  console.log("[shutdown] Shutdown complete. Exiting.");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
