@@ -11,6 +11,7 @@ import { roomLifecycleRouter } from "./routes/roomLifecycle.js";
 import { songsRouter } from "./routes/songs.js";
 import { playlistRouter } from "./routes/playlist.js";
 import { messagesRouter } from "./routes/messages.js";
+import { getRoomConnections } from "./ws/connectionManager.js";
 
 // Middleware
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -31,6 +32,29 @@ app.get("/health", async (_req, res) => {
     console.error("[health] DB connection failed:", err);
     res.status(503).json({ status: "error", db: "disconnected" });
   }
+});
+
+// ----------------------------------------------------------------------------
+// Debug — Phase 7.1: expose this instance's in-memory WS connection state.
+// Remove after the cross-instance failure is demonstrated.
+// ----------------------------------------------------------------------------
+app.get("/debug/connections", (req, res) => {
+  const roomId = req.query.roomId as string | undefined;
+  if (!roomId) {
+    res.status(400).json({ error: "roomId query param required" });
+    return;
+  }
+  const conns = getRoomConnections(roomId);
+  res.json({
+    port: PORT,
+    roomId,
+    connectionCount: conns.length,
+    connections: conns.map((c) => ({
+      participantId: c.participantId,
+      displayName: c.displayName,
+      role: c.role,
+    })),
+  });
 });
 
 // ----------------------------------------------------------------------------
