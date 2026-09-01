@@ -37,6 +37,7 @@ function createClient(label: string): Redis {
 // Singletons — created once at module load time.
 let _publisher: Redis | null = null;
 let _subscriber: Redis | null = null;
+let _keyspaceSubscriber: Redis | null = null;
 
 export function getPublisher(): Redis {
   if (!_publisher) _publisher = createClient("pub");
@@ -48,8 +49,19 @@ export function getSubscriber(): Redis {
   return _subscriber;
 }
 
+/** Dedicated connection for keyspace notifications (separate from room-events Pub/Sub). */
+export function getKeyspaceSubscriber(): Redis {
+  if (!_keyspaceSubscriber) _keyspaceSubscriber = createClient("ks");
+  return _keyspaceSubscriber;
+}
+
 export async function closeRedisConnections(): Promise<void> {
-  await Promise.all([_publisher?.quit(), _subscriber?.quit()]);
+  await Promise.all([
+    _publisher?.quit(),
+    _subscriber?.quit(),
+    _keyspaceSubscriber?.quit(),
+  ]);
   _publisher = null;
   _subscriber = null;
+  _keyspaceSubscriber = null;
 }

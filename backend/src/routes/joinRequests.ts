@@ -17,6 +17,7 @@ import {
   sendTo,
 } from "../ws/connectionManager.js";
 import { publishRoomEvent } from "../lib/roomEvents.js";
+import { cancelRoomExpiry } from "../lib/roomExpiry.js";
 import {
   makeServerEvent,
   type JoinRequestPayload,
@@ -274,6 +275,11 @@ joinRequestsRouter.patch(
         roomId: participant.roomId,
       },
     };
+
+    // Room may have been INACTIVE (everyone had left). Cancel the expiry
+    // timer now that it's being re-activated with a new participant.
+    await cancelRoomExpiry(roomId);
+
     await publishRoomEvent(roomId, makeServerEvent("JOIN_REQUEST_RESOLVED", resolvedPayload));
 
     res.json({

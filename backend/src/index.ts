@@ -3,6 +3,7 @@ import express from "express";
 import { prisma } from "./lib/prisma.js";
 import { attachWebSocketServer } from "./ws/server.js";
 import { subscribeRoomEvents } from "./lib/roomEvents.js";
+import { configureRoomExpiry, subscribeRoomExpiry, rearmInactiveRooms } from "./lib/roomExpiry.js";
 
 // Routers
 import { roomsRouter } from "./routes/rooms.js";
@@ -13,7 +14,6 @@ import { songsRouter } from "./routes/songs.js";
 import { playlistRouter } from "./routes/playlist.js";
 import { messagesRouter } from "./routes/messages.js";
 import { presenceRouter } from "./routes/presence.js";
-import { getRoomConnections } from "./ws/connectionManager.js";
 
 // Middleware
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -21,12 +21,23 @@ import { errorHandler } from "./middleware/errorHandler.js";
 const app = express();
 const PORT = process.env.PORT ?? 3000;
 
+// ---------------------------------------------------------------------------
+// Application configuration — resolved once before any infrastructure starts.
+// Routes and lifecycle handlers import roomExpiry.ts; configureRoomExpiry()
+// ensures they all see the same TTL regardless of CJS module cache behaviour.
+// ---------------------------------------------------------------------------
+configureRoomExpiry(Number(process.env["ROOM_INACTIVE_TTL_SECS"] ?? 300));
+
 app.use(express.json());
 
 // ----------------------------------------------------------------------------
 // Health check
 // ----------------------------------------------------------------------------
 app.get("/health", async (_req, res) => {
+  if (!isReady()) {
+    res.status(503).json({ status: "starting" });
+    return;
+  }
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ status: "ok", db: "connected" });
@@ -37,26 +48,15 @@ app.get("/health", async (_req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// Debug — Phase 7.1: expose this instance's in-memory WS connection state.
-// Remove after the cross-instance failure is demonstrated.
+// Debug — Phase 7.4: lightweight room status check (no auth required).
+// Used only by the demo script.
 // ----------------------------------------------------------------------------
-app.get("/debug/connections", (req, res) => {
+app.get("/debug/room-status", async (req, res) => {
   const roomId = req.query.roomId as string | undefined;
-  if (!roomId) {
-    res.status(400).json({ error: "roomId query param required" });
-    return;
-  }
-  const conns = getRoomConnections(roomId);
-  res.json({
-    port: PORT,
-    roomId,
-    connectionCount: conns.length,
-    connections: conns.map((c) => ({
-      participantId: c.participantId,
-      displayName: c.displayName,
-      role: c.role,
-    })),
-  });
+  if (!roomId) { res.status(400).json({ error: "roomId required" }); return; }
+  const room = await prisma.room.findUnique({ where: { id: roomId }, select: { id: true, status: true } });
+  if (!room) { res.status(404).json({ error: "not found" }); return; }
+  res.json({ roomId: room.id, status: room.status });
 });
 
 // ----------------------------------------------------------------------------
@@ -100,3 +100,22 @@ const httpServer = app.listen(PORT, () => {
 
 attachWebSocketServer(httpServer);
 subscribeRoomEvents();
+
+// Track whether async startup tasks have completed.
+// The /health endpoint waits for this before returning ok,
+// ensuring the demo/test scripts don't send requests before
+// Redis subscriptions are live.
+let _ready = false;
+export function isReady(): boolean { return _ready; }
+
+(async () => {
+  try {
+    await subscribeRoomExpiry();
+    await rearmInactiveRooms();
+    _ready = true;
+    console.log("[startup] ready");
+  } catch (err) {
+    console.error("[startup] room-expiry initialisation failed", err);
+    _ready = true; // still mark ready so health check doesn't block forever
+  }
+})();

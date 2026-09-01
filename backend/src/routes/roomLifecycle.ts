@@ -21,6 +21,7 @@ import {
 } from "../ws/connectionManager.js";
 import { makeServerEvent } from "../lib/wsTypes.js";
 import { publishRoomEvent } from "../lib/roomEvents.js";
+import { setRoomExpiry, cancelRoomExpiry } from "../lib/roomExpiry.js";
 import type { Participant } from "@prisma/client";
 
 export const roomLifecycleRouter = Router();
@@ -62,6 +63,8 @@ roomLifecycleRouter.delete(
 
     // Notify all connected participants that the room is closed.
     await publishRoomEvent(roomId, makeServerEvent("ROOM_CLOSED", {}));
+    // Room is explicitly CLOSED — no TTL needed (already final state).
+    await cancelRoomExpiry(roomId);
 
     res.json({ room: { id: updated.id, status: updated.status } });
   },
@@ -124,16 +127,21 @@ roomLifecycleRouter.patch(
       orderBy: { joinedAt: "asc" },
     });
 
+    console.log(`[roomLifecycle] leave roomId=${roomId} participantId=${participantId} role=${caller.role} remaining=${remaining.length}`);
+
+    console.log(`[roomLifecycle] leave roomId=${roomId} participantId=${participantId} role=${caller.role} remaining=${remaining.length}`);
+
     let newHost: Participant | null = null;
     let roomStatus = "ACTIVE" as "ACTIVE" | "INACTIVE";
 
     if (remaining.length === 0) {
-      // Last person left → room goes INACTIVE.
+      // Last person left → room goes INACTIVE → arm expiry TTL.
       roomStatus = "INACTIVE";
       await prisma.room.update({
         where: { id: roomId },
         data: { status: "INACTIVE" },
       });
+      await setRoomExpiry(roomId);
     } else if (caller.role === "HOST") {
       // HOST left but others remain → transfer to earliest-joined *connected* participant.
       // Prefer someone with an active WebSocket; fall back to any DB member.

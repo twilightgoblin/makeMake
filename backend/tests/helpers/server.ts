@@ -21,6 +21,8 @@ import { playlistRouter } from "../../src/routes/playlist.js";
 import { messagesRouter } from "../../src/routes/messages.js";
 import { errorHandler } from "../../src/middleware/errorHandler.js";
 import { attachWebSocketServer } from "../../src/ws/server.js";
+import { subscribeRoomEvents } from "../../src/lib/roomEvents.js";
+import { configureRoomExpiry, subscribeRoomExpiry } from "../../src/lib/roomExpiry.js";
 
 export interface TestServer {
   httpServer: http.Server;
@@ -44,6 +46,12 @@ export async function startServer(): Promise<TestServer> {
 
   const httpServer = http.createServer(app);
   attachWebSocketServer(httpServer);
+
+  // Wire Redis pub/sub so WS broadcasts work in tests (same as production).
+  // configureRoomExpiry uses TTL=0 in tests so no accidental expiry side effects.
+  configureRoomExpiry(Number(process.env["ROOM_INACTIVE_TTL_SECS"] ?? 300));
+  subscribeRoomEvents();
+  await subscribeRoomExpiry();
 
   await new Promise<void>((resolve) => {
     // Port 0 → OS picks a free port
