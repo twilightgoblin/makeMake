@@ -39,6 +39,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
 } from "../../lib/presence.js";
 import { SERVER_ID } from "../../lib/serverId.js";
+import { cancelHostGrace } from "../../lib/hostGrace.js";
 import { handleMessage } from "./message.js";
 import { handleDisconnect } from "./disconnect.js";
 
@@ -111,7 +112,18 @@ export async function handleConnection(
   // disconnected recently but are reconnecting within the grace window),
   // cancel it so they keep their HOST role. No DB update is needed because
   // the deferred doHostTransfer() hasn't run yet — the DB role is unchanged.
+  //
+  // cancelHostGrace() is always called for HOST participants — it is a no-op
+  // if no grace key exists, and it works across instances (Redis-backed).
+  // clearPendingTransfer() cancels the in-process setTimeout if this is the
+  // same instance the HOST disconnected from.
   // -------------------------------------------------------------------------
+  if (participant.role === "HOST") {
+    // Cancel the cross-instance Redis grace key first so doHostTransfer()
+    // on any instance sees the key is gone and aborts.
+    await cancelHostGrace(participantId);
+  }
+
   if (hasPendingTransfer(participantId)) {
     clearPendingTransfer(participantId);
     // Ensure the in-memory record reflects their DB role (still HOST).

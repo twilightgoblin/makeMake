@@ -34,6 +34,7 @@ import {
 } from "../connectionManager.js";
 import { publishRoomEvent } from "../../lib/roomEvents.js";
 import { removePresence } from "../../lib/presence.js";
+import { armHostGrace, isHostGraceActive } from "../../lib/hostGrace.js";
 import type WebSocket from "ws";
 
 // Grace period before a HOST disconnect triggers a host transfer.
@@ -77,8 +78,18 @@ export async function handleDisconnect(participantId: string, socket?: WebSocket
 
   // -------------------------------------------------------------------------
   // 3. Host transfer — deferred by GRACE_MS
+  //
+  // Two-layer guard:
+  //   a) In-process setTimeout  — drives the attempt on THIS instance
+  //   b) Redis key host:grace:<id>  — cross-instance flag; if the HOST
+  //      reconnects on ANY instance within the grace window, that instance
+  //      deletes the key, and doHostTransfer() will abort on seeing it gone.
   // -------------------------------------------------------------------------
   if (role !== "HOST") return;
+
+  // Arm the cross-instance Redis grace key BEFORE starting the timer so
+  // the flag is visible to all instances immediately.
+  await armHostGrace(participantId);
 
   const timer = setTimeout(() => {
     void doHostTransfer(participantId, roomId);
@@ -95,6 +106,17 @@ async function doHostTransfer(
   departingHostId: string,
   roomId: string,
 ): Promise<void> {
+  // Cross-instance guard: if the HOST reconnected on ANY backend instance,
+  // cancelHostGrace() will have deleted this key. A missing key means the
+  // transfer must not proceed regardless of what our local timer says.
+  const graceStillActive = await isHostGraceActive(departingHostId);
+  if (!graceStillActive) {
+    console.log(
+      `[ws] host-transfer aborted: HOST ${departingHostId} reconnected (grace key gone)`,
+    );
+    return;
+  }
+
   const remaining = getRoomConnections(roomId);
 
   if (remaining.length === 0) {
