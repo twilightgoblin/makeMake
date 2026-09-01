@@ -10,174 +10,86 @@ const prisma = new PrismaClient({ adapter });
 // ---------------------------------------------------------------------------
 // Seed data — global song library
 //
-// audioUrl / coverUrl point to the CDN path pattern we'll use in production:
-//   https://cdn.makemake.app/audio/<filename>
-//   https://cdn.makemake.app/covers/<filename>
+// Dev audio: freely licensed tracks from the Internet Archive / ccMixter.
+// These are real, publicly accessible URLs that work without a CDN.
 //
-// For local development, swap the base URL in .env (STORAGE_BASE_URL) once
-// we wire up object storage in a later phase. The filenames stay the same.
+// Production: swap audioUrl / coverUrl for CDN paths once object storage
+// is wired up (later phase). The title/artist/album metadata stays the same.
 // ---------------------------------------------------------------------------
 
 const songs = [
+  // ── Publicly hosted, freely licensed tracks ────────────────────────────
   {
-    title: "Blinding Lights",
-    artist: "The Weeknd",
-    album: "After Hours",
-    duration: 200,
-    coverUrl: "https://cdn.makemake.app/covers/blinding-lights.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/blinding-lights.mp3",
+    title: "Journey (Instrumental)",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 173,
+    coverUrl: "https://picsum.photos/seed/journey/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Journey.mp3",
   },
   {
-    title: "Levitating",
-    artist: "Dua Lipa",
-    album: "Future Nostalgia",
-    duration: 203,
-    coverUrl: "https://cdn.makemake.app/covers/levitating.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/levitating.mp3",
+    title: "Cipher",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 139,
+    coverUrl: "https://picsum.photos/seed/cipher/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Cipher.mp3",
   },
   {
-    title: "Stay",
-    artist: "The Kid LAROI & Justin Bieber",
-    album: "F*CK LOVE 3: OVER YOU",
-    duration: 141,
-    coverUrl: "https://cdn.makemake.app/covers/stay.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/stay.mp3",
+    title: "Wholesome",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 208,
+    coverUrl: "https://picsum.photos/seed/wholesome/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wholesome.mp3",
   },
   {
-    title: "Heat Waves",
-    artist: "Glass Animals",
-    album: "Dreamland",
-    duration: 238,
-    coverUrl: "https://cdn.makemake.app/covers/heat-waves.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/heat-waves.mp3",
+    title: "Sneaky Snitch",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 138,
+    coverUrl: "https://picsum.photos/seed/sneaky/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Snitch.mp3",
   },
   {
-    title: "As It Was",
-    artist: "Harry Styles",
-    album: "Harry's House",
-    duration: 167,
-    coverUrl: "https://cdn.makemake.app/covers/as-it-was.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/as-it-was.mp3",
+    title: "Pixel Peeker Polka",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 157,
+    coverUrl: "https://picsum.photos/seed/pixel/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Pixel%20Peeker%20Polka%20-%20faster.mp3",
   },
   {
-    title: "Anti-Hero",
-    artist: "Taylor Swift",
-    album: "Midnights",
-    duration: 200,
-    coverUrl: "https://cdn.makemake.app/covers/anti-hero.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/anti-hero.mp3",
+    title: "Pamgaea",
+    artist: "Kevin MacLeod",
+    album: "Royalty Free Music",
+    duration: 214,
+    coverUrl: "https://picsum.photos/seed/pamgaea/300/300",
+    audioUrl:
+      "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Pamgaea.mp3",
   },
   {
-    title: "Unholy",
-    artist: "Sam Smith ft. Kim Petras",
-    album: "Gloria",
-    duration: 156,
-    coverUrl: "https://cdn.makemake.app/covers/unholy.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/unholy.mp3",
-  },
-  {
-    title: "Flowers",
-    artist: "Miley Cyrus",
-    album: "Endless Summer Vacation",
-    duration: 200,
-    coverUrl: "https://cdn.makemake.app/covers/flowers.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/flowers.mp3",
-  },
-  {
-    title: "Cruel Summer",
-    artist: "Taylor Swift",
-    album: "Lover",
-    duration: 178,
-    coverUrl: "https://cdn.makemake.app/covers/cruel-summer.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/cruel-summer.mp3",
-  },
-  {
-    title: "Peaches",
-    artist: "Justin Bieber ft. Daniel Caesar & Giveon",
-    album: "Justice",
+    title: "Gymnopedie No. 1",
+    artist: "Erik Satie",
+    album: "Gymnopédies (Public Domain)",
     duration: 198,
-    coverUrl: "https://cdn.makemake.app/covers/peaches.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/peaches.mp3",
+    coverUrl: "https://picsum.photos/seed/satie/300/300",
+    audioUrl:
+      "https://upload.wikimedia.org/wikipedia/commons/e/e9/Gymnopedie_No._1.ogg",
   },
   {
-    title: "Bad Guy",
-    artist: "Billie Eilish",
-    album: "When We All Fall Asleep, Where Do We Go?",
-    duration: 194,
-    coverUrl: "https://cdn.makemake.app/covers/bad-guy.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/bad-guy.mp3",
-  },
-  {
-    title: "Montero (Call Me By Your Name)",
-    artist: "Lil Nas X",
-    album: "Montero",
-    duration: 137,
-    coverUrl: "https://cdn.makemake.app/covers/montero.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/montero.mp3",
-  },
-  {
-    title: "Industry Baby",
-    artist: "Lil Nas X ft. Jack Harlow",
-    album: "Montero",
-    duration: 212,
-    coverUrl: "https://cdn.makemake.app/covers/industry-baby.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/industry-baby.mp3",
-  },
-  {
-    title: "good 4 u",
-    artist: "Olivia Rodrigo",
-    album: "SOUR",
-    duration: 178,
-    coverUrl: "https://cdn.makemake.app/covers/good-4-u.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/good-4-u.mp3",
-  },
-  {
-    title: "drivers license",
-    artist: "Olivia Rodrigo",
-    album: "SOUR",
-    duration: 242,
-    coverUrl: "https://cdn.makemake.app/covers/drivers-license.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/drivers-license.mp3",
-  },
-  {
-    title: "Watermelon Sugar",
-    artist: "Harry Styles",
-    album: "Fine Line",
-    duration: 174,
-    coverUrl: "https://cdn.makemake.app/covers/watermelon-sugar.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/watermelon-sugar.mp3",
-  },
-  {
-    title: "Save Your Tears",
-    artist: "The Weeknd",
-    album: "After Hours",
-    duration: 215,
-    coverUrl: "https://cdn.makemake.app/covers/save-your-tears.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/save-your-tears.mp3",
-  },
-  {
-    title: "Dynamite",
-    artist: "BTS",
-    album: "Dynamite",
-    duration: 199,
-    coverUrl: "https://cdn.makemake.app/covers/dynamite.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/dynamite.mp3",
-  },
-  {
-    title: "Shivers",
-    artist: "Ed Sheeran",
-    album: "=",
-    duration: 207,
-    coverUrl: "https://cdn.makemake.app/covers/shivers.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/shivers.mp3",
-  },
-  {
-    title: "Easy On Me",
-    artist: "Adele",
-    album: "30",
-    duration: 224,
-    coverUrl: "https://cdn.makemake.app/covers/easy-on-me.jpg",
-    audioUrl: "https://cdn.makemake.app/audio/easy-on-me.mp3",
+    title: "Für Elise",
+    artist: "Ludwig van Beethoven",
+    album: "Piano Works (Public Domain)",
+    duration: 175,
+    coverUrl: "https://picsum.photos/seed/beethoven/300/300",
+    audioUrl:
+      "https://upload.wikimedia.org/wikipedia/commons/3/3d/Beethoven_F%C3%BCr_Elise.ogg",
   },
 ];
 
