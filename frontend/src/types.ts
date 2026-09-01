@@ -192,7 +192,7 @@ export interface WsRoomStatePayload {
   roomId: string;
   status: RoomStatus;
   playback: {
-    currentSongId: string | null;
+    currentSong: Song | null;
     isPlaying: boolean;
     positionSecs: number;
     stateUpdatedAt: string | null;
@@ -276,6 +276,7 @@ export type WsClientEventType =
   | 'SEEK'
   | 'NEXT'
   | 'PREVIOUS'
+  | 'SET_SONG'
   | 'PLAYLIST_ADD'
   | 'PLAYLIST_REMOVE'
   | 'PLAYLIST_REORDER'

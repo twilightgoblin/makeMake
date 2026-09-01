@@ -30,7 +30,8 @@ import {
   addConnection,
   sendTo,
   broadcastToRoomExcept,
-  getRoomConnections,
+  clearPendingTransfer,
+  hasPendingTransfer,
 } from "../connectionManager.js";
 import { handleMessage } from "./message.js";
 import { handleDisconnect } from "./disconnect.js";
@@ -99,7 +100,19 @@ export async function handleConnection(
 
   // -------------------------------------------------------------------------
   // 4. Register connection
+  //
+  // If a pending host-transfer timer exists for this participant (they
+  // disconnected recently but are reconnecting within the grace window),
+  // cancel it so they keep their HOST role. No DB update is needed because
+  // the deferred doHostTransfer() hasn't run yet — the DB role is unchanged.
   // -------------------------------------------------------------------------
+  if (hasPendingTransfer(participantId)) {
+    clearPendingTransfer(participantId);
+    // Ensure the in-memory record reflects their DB role (still HOST).
+    // participant.role comes from the DB read above, which hasn't been
+    // touched by the grace-period path, so it's still correct.
+  }
+
   addConnection({
     socket,
     roomId,
@@ -115,7 +128,17 @@ export async function handleConnection(
     roomId: room.id,
     status: room.status as "ACTIVE" | "INACTIVE" | "CLOSED",
     playback: {
-      currentSongId: room.currentSongId,
+      currentSong: room.currentSong
+        ? {
+            id: room.currentSong.id,
+            title: room.currentSong.title,
+            artist: room.currentSong.artist,
+            album: room.currentSong.album,
+            duration: room.currentSong.duration,
+            coverUrl: room.currentSong.coverUrl,
+            audioUrl: room.currentSong.audioUrl,
+          }
+        : null,
       isPlaying: room.isPlaying,
       positionSecs: room.positionSecs,
       stateUpdatedAt: room.stateUpdatedAt?.toISOString() ?? null,

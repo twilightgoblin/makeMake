@@ -21,6 +21,7 @@ import {
   type PlayPayload,
   type PausePayload,
   type SeekPayload,
+  type SetSongPayload,
   type PlayBroadcastPayload,
   type PauseBroadcastPayload,
   type SeekBroadcastPayload,
@@ -64,6 +65,9 @@ export async function handlePlayback(
       break;
     case "PREVIOUS":
       await handlePrevious(roomId, envelope);
+      break;
+    case "SET_SONG":
+      await handleSetSong(socket, roomId, envelope);
       break;
   }
 }
@@ -231,4 +235,55 @@ async function changeSong(
 
   const eventType = direction === "next" ? "NEXT" : "PREVIOUS";
   broadcastToRoom(roomId, makeServerEvent(eventType, broadcast));
+}
+
+// ---------------------------------------------------------------------------
+// SET_SONG — HOST jumps directly to a specific playlist entry
+// Pauses playback, sets currentSongId to the entry's song, resets position.
+// Broadcasts as a NEXT-style SongChangeBroadcastPayload so clients reload audio.
+// ---------------------------------------------------------------------------
+async function handleSetSong(
+  socket: WebSocket,
+  roomId: string,
+  envelope: ClientEnvelope,
+): Promise<void> {
+  const payload = envelope.payload as SetSongPayload;
+
+  if (!payload?.entryId || typeof payload.entryId !== "string") {
+    sendTo(socket, makeErrorEvent("INVALID_PAYLOAD", '"entryId" is required.', envelope.requestId));
+    return;
+  }
+
+  const entry = await prisma.playlistEntry.findFirst({
+    where: { id: payload.entryId, roomId },
+    select: { songId: true },
+  });
+
+  if (!entry) {
+    sendTo(socket, makeErrorEvent("PLAYLIST_ENTRY_NOT_FOUND", "Playlist entry not found.", envelope.requestId));
+    return;
+  }
+
+  const now = new Date();
+  const updated = await prisma.room.update({
+    where: { id: roomId },
+    data: {
+      currentSongId: entry.songId,
+      positionSecs: 0,
+      isPlaying: false,
+      stateUpdatedAt: now,
+    },
+    select: { isPlaying: true },
+  });
+
+  const broadcast: SongChangeBroadcastPayload = {
+    songId: entry.songId,
+    positionSecs: 0,
+    isPlaying: false,
+    stateUpdatedAt: now.toISOString(),
+  };
+
+  // Reuse NEXT event type on the wire — same payload shape, clients handle it identically.
+  broadcastToRoom(roomId, makeServerEvent("NEXT", broadcast));
+  void updated;
 }

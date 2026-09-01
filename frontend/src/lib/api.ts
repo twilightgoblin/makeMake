@@ -12,6 +12,7 @@ import type {
   JoinRequestStatusResponse,
   ResolveJoinRequestResponse,
   RoomDetail,
+  Song,
   SongsResponse,
 } from '../types';
 
@@ -173,4 +174,81 @@ export function closeRoom(roomId: string, participantId: string): Promise<void> 
     method: 'DELETE',
     headers: { 'X-Participant-Id': participantId },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Playlist
+// ---------------------------------------------------------------------------
+
+export interface PlaylistEntry {
+  id: string;
+  position: number;
+  addedById: string | null;
+  addedAt: string;
+  song: Song;
+}
+
+export interface PlaylistResponse {
+  playlist: PlaylistEntry[];
+}
+
+/**
+ * GET /rooms/:id/playlist — fetch the ordered playlist for a room.
+ * Requires X-Participant-Id header (caller must be an active participant).
+ */
+export function fetchPlaylist(
+  roomId: string,
+  participantId: string,
+): Promise<PlaylistResponse> {
+  return request<PlaylistResponse>(`/rooms/${roomId}/playlist`, {
+    headers: { 'X-Participant-Id': participantId },
+  });
+}
+
+/**
+ * POST /rooms/:id/playlist — add a song to the room playlist.
+ * Requires X-Participant-Id header (any active participant).
+ */
+export function addToPlaylist(
+  roomId: string,
+  songId: string,
+  participantId: string,
+): Promise<{ entry: PlaylistEntry }> {
+  return request<{ entry: PlaylistEntry }>(`/rooms/${roomId}/playlist`, {
+    method: 'POST',
+    body: JSON.stringify({ songId }),
+    headers: { 'X-Participant-Id': participantId },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Sync math
+// ---------------------------------------------------------------------------
+
+export interface LivePlaybackState {
+  currentSong: Song | null;
+  isPlaying: boolean;
+  /** The authoritative anchor position from the server */
+  positionSecs: number;
+  stateUpdatedAt: string | null;
+}
+
+/**
+ * Compute the expected current playback position based on the server's
+ * authoritative state and the time elapsed since it was recorded.
+ *
+ * livePosition = positionSecs + (now − stateUpdatedAt)  // if playing
+ * livePosition = positionSecs                            // if paused
+ *
+ * The result is clamped to [0, song.duration] when a song is present.
+ */
+export function computeLivePosition(state: LivePlaybackState): number {
+  if (!state.isPlaying || !state.stateUpdatedAt) {
+    return state.positionSecs;
+  }
+  const elapsedSecs =
+    (Date.now() - new Date(state.stateUpdatedAt).getTime()) / 1000;
+  const live = state.positionSecs + elapsedSecs;
+  const max = state.currentSong?.duration ?? Infinity;
+  return Math.min(live, max);
 }

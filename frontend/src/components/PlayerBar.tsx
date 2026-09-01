@@ -22,6 +22,9 @@ interface Props {
   onNext: () => void;
   onPrevious: () => void;
   onVolumeChange: (vol: number) => void;
+  /** When true, playback controls (play/pause/seek/next/prev) are disabled.
+   *  Used in room mode for non-HOST participants. Volume still works locally. */
+  controlsLocked?: boolean;
 }
 
 export function PlayerBar({
@@ -32,6 +35,7 @@ export function PlayerBar({
   onNext,
   onPrevious,
   onVolumeChange,
+  controlsLocked = false,
 }: Props) {
   const { song, status, positionSecs, durationSecs, volume } = state;
 
@@ -85,9 +89,9 @@ export function PlayerBar({
           <button
             className="ctrl-btn"
             onClick={onPrevious}
-            disabled={isIdle}
+            disabled={isIdle || controlsLocked}
             aria-label="Previous track"
-            title="Previous"
+            title={controlsLocked ? 'Host controls playback' : 'Previous'}
           >
             <PreviousIcon />
           </button>
@@ -95,9 +99,9 @@ export function PlayerBar({
           <button
             className="ctrl-btn ctrl-btn--primary"
             onClick={togglePlay}
-            disabled={isIdle || status === 'loading'}
+            disabled={isIdle || status === 'loading' || controlsLocked}
             aria-label={isPlaying ? 'Pause' : 'Play'}
-            title={isPlaying ? 'Pause' : 'Play'}
+            title={controlsLocked ? 'Host controls playback' : isPlaying ? 'Pause' : 'Play'}
           >
             {status === 'loading' ? <SpinnerIcon /> : isPlaying ? <PauseIcon /> : <PlayIcon />}
           </button>
@@ -105,9 +109,9 @@ export function PlayerBar({
           <button
             className="ctrl-btn"
             onClick={onNext}
-            disabled={isIdle}
+            disabled={isIdle || controlsLocked}
             aria-label="Next track"
-            title="Next"
+            title={controlsLocked ? 'Host controls playback' : 'Next'}
           >
             <NextIcon />
           </button>
@@ -130,7 +134,7 @@ export function PlayerBar({
               step={0.5}
               value={positionSecs}
               onChange={handleSeekInput}
-              disabled={isIdle || durationSecs === 0}
+              disabled={isIdle || durationSecs === 0 || controlsLocked}
               aria-label="Seek position"
               aria-valuemin={0}
               aria-valuemax={durationSecs}

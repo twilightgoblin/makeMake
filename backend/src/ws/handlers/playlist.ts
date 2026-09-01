@@ -97,6 +97,29 @@ async function handleAdd(
   };
 
   broadcastToRoom(roomId, makeServerEvent("PLAYLIST_ADD", broadcast));
+
+  // If the room has no current song, set this as the first one (paused at 0).
+  // This is the only path that populates currentSongId for a fresh room.
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { currentSongId: true },
+  });
+
+  if (!room?.currentSongId) {
+    const now = new Date();
+    await prisma.room.update({
+      where: { id: roomId },
+      data: { currentSongId: entry.song.id, positionSecs: 0, isPlaying: false, stateUpdatedAt: now },
+    });
+
+    // Broadcast a NEXT-style event so all clients load the song (paused).
+    broadcastToRoom(roomId, makeServerEvent("NEXT", {
+      songId: entry.song.id,
+      positionSecs: 0,
+      isPlaying: false,
+      stateUpdatedAt: now.toISOString(),
+    }));
+  }
 }
 
 // ---------------------------------------------------------------------------

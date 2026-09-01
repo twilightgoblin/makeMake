@@ -27,6 +27,7 @@ export type ClientEventType =
   | "SEEK"
   | "NEXT"
   | "PREVIOUS"
+  | "SET_SONG"
   | "PLAYLIST_ADD"
   | "PLAYLIST_REMOVE"
   | "PLAYLIST_REORDER"
@@ -56,6 +57,11 @@ export interface SeekPayload {
 /** NEXT and PREVIOUS carry no payload */
 export type NextPayload = Record<string, never>;
 export type PreviousPayload = Record<string, never>;
+
+/** SET_SONG — HOST jumps directly to a specific playlist entry */
+export interface SetSongPayload {
+  entryId: string;
+}
 
 export interface PlaylistAddPayload {
   songId: string;
@@ -111,8 +117,18 @@ export interface ParticipantSummary {
   role: "HOST" | "MEMBER";
 }
 
+export interface PlaybackSongSummary {
+  id: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  duration: number;
+  coverUrl: string;
+  audioUrl: string;
+}
+
 export interface PlaybackState {
-  currentSongId: string | null;
+  currentSong: PlaybackSongSummary | null;
   isPlaying: boolean;
   positionSecs: number;
   stateUpdatedAt: ISOTimestamp | null;

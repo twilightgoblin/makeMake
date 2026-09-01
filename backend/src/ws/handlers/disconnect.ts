@@ -3,23 +3,21 @@
 //
 // Called when a participant's socket closes (intentional or network drop).
 //
-// This is a connection-level event, NOT the same as the HTTP "leave room"
-// endpoint. A disconnect means the socket closed; the participant row stays
-// intact and leftAt is NOT set here. That separation keeps the door open for
-// reconnection logic in a future phase.
+// disconnect ≠ leave.
+// A socket close does NOT set leftAt on the participant row. That separation
+// means a browser refresh (disconnect → reconnect on the same participantId)
+// preserves room membership and role.
 //
-// However, we do need to:
+// What we do on disconnect:
 //   1. Remove the connection from the manager
-//   2. Broadcast USER_LEFT to the room
-//   3. If the disconnecting participant was the HOST, transfer host role to
-//      the earliest-joined remaining *connected* participant and broadcast
-//      HOST_CHANGED.
-//   4. If no other connected participants remain, leave the room quietly
-//      (the HTTP lifecycle handles INACTIVE status separately via TTL).
-//
-// NOTE: Host transfer here only updates the in-memory role cache and the DB.
-//       The HTTP "leave" endpoint does the same for intentional departures.
-//       Both paths call the same DB update so the DB stays consistent.
+//   2. Broadcast USER_LEFT immediately (so presence is accurate)
+//   3. If the disconnecting participant was the HOST, start a reconnect grace
+//      period (WS_RECONNECT_GRACE_MS, default 8 s). If they reconnect within
+//      the window, the timer is cancelled in connection.ts and they keep HOST.
+//      If the timer fires, transfer host to the earliest-joined connected
+//      participant and broadcast HOST_CHANGED.
+//   4. If no other connected participants remain, leave quietly — TTL handles
+//      INACTIVE status.
 // -----------------------------------------------------------------------------
 
 import { prisma } from "../../lib/prisma.js";
@@ -33,7 +31,15 @@ import {
   updateRole,
   broadcastToRoom,
   getRoomConnections,
+  setPendingTransfer,
 } from "../connectionManager.js";
+
+// Grace period before a HOST disconnect triggers a host transfer.
+// Set WS_RECONNECT_GRACE_MS=0 in tests to get instant transfer (backward-compat).
+// Read via a getter so tests can override process.env after module load.
+function getGraceMs(): number {
+  return Number(process.env["WS_RECONNECT_GRACE_MS"] ?? 8_000);
+}
 
 export async function handleDisconnect(participantId: string): Promise<void> {
   // -------------------------------------------------------------------------
@@ -45,53 +51,67 @@ export async function handleDisconnect(participantId: string): Promise<void> {
   const { roomId, displayName, role } = record;
 
   // -------------------------------------------------------------------------
-  // 2. Broadcast USER_LEFT to remaining room members
+  // 2. Broadcast USER_LEFT to remaining room members (immediate — presence
+  //    is accurate as of right now)
   // -------------------------------------------------------------------------
   const userLeftPayload: UserLeftPayload = { participantId, displayName };
   broadcastToRoom(roomId, makeServerEvent("USER_LEFT", userLeftPayload));
 
   // -------------------------------------------------------------------------
-  // 3. Host transfer (if needed)
+  // 3. Host transfer — deferred by GRACE_MS
   // -------------------------------------------------------------------------
-  if (role === "HOST") {
-    const remaining = getRoomConnections(roomId);
+  if (role !== "HOST") return;
 
-    if (remaining.length > 0) {
-      // Find the earliest-joined active participant from DB among those still connected.
-      const connectedIds = remaining.map((c) => c.participantId);
+  const timer = setTimeout(() => {
+    void doHostTransfer(participantId, roomId);
+  }, getGraceMs());
 
-      const newHost = await prisma.participant.findFirst({
-        where: { id: { in: connectedIds }, roomId, leftAt: null },
-        orderBy: { joinedAt: "asc" },
-        select: { id: true, displayName: true },
-      });
+  setPendingTransfer(participantId, timer);
+}
 
-      if (newHost) {
-        // Update DB
-        await prisma.participant.update({
-          where: { id: newHost.id },
-          data: { role: "HOST" },
-        });
+// ---------------------------------------------------------------------------
+// Deferred host-transfer logic
+// Runs only if the HOST didn't reconnect within the grace window.
+// ---------------------------------------------------------------------------
+async function doHostTransfer(
+  departingHostId: string,
+  roomId: string,
+): Promise<void> {
+  const remaining = getRoomConnections(roomId);
 
-        // Demote old host in DB (they may reconnect later as MEMBER)
-        await prisma.participant.update({
-          where: { id: participantId },
-          data: { role: "MEMBER" },
-        });
-
-        // Update in-memory cache
-        updateRole(newHost.id, "HOST");
-
-        const hostChangedPayload: HostChangedPayload = {
-          newHostId: newHost.id,
-          newHostDisplayName: newHost.displayName,
-        };
-        broadcastToRoom(roomId, makeServerEvent("HOST_CHANGED", hostChangedPayload));
-      }
-    }
+  if (remaining.length === 0) {
+    // Room is empty — no one to transfer to, TTL will clean up.
+    return;
   }
 
-  // -------------------------------------------------------------------------
-  // 4. No-op if room is now empty — TTL cleanup handles INACTIVE status.
-  // -------------------------------------------------------------------------
+  const connectedIds = remaining.map((c) => c.participantId);
+
+  const newHost = await prisma.participant.findFirst({
+    where: { id: { in: connectedIds }, roomId, leftAt: null },
+    orderBy: { joinedAt: "asc" },
+    select: { id: true, displayName: true },
+  });
+
+  if (!newHost) return;
+
+  // Update DB
+  await prisma.participant.update({
+    where: { id: newHost.id },
+    data: { role: "HOST" },
+  });
+
+  // Demote old host in DB so if they reconnect later they come back as MEMBER
+  await prisma.participant.update({
+    where: { id: departingHostId },
+    data: { role: "MEMBER" },
+  });
+
+  // Update in-memory cache
+  updateRole(newHost.id, "HOST");
+
+  const hostChangedPayload: HostChangedPayload = {
+    newHostId: newHost.id,
+    newHostDisplayName: newHost.displayName,
+  };
+  broadcastToRoom(roomId, makeServerEvent("HOST_CHANGED", hostChangedPayload));
 }

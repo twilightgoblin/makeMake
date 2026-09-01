@@ -28,6 +28,12 @@ export class AudioPlayer {
   private queueIndex = -1;
   private status: PlayerStatus = 'idle';
   private onChange: PlayerStateChangeCallback;
+  /**
+   * When true, the 'ended' event does NOT auto-advance to the next track.
+   * RoomPage sets this so that song transitions are driven by the server
+   * (NEXT/PREVIOUS broadcasts) rather than local state.
+   */
+  roomMode = false;
 
   constructor(onChange: PlayerStateChangeCallback) {
     this.onChange = onChange;
@@ -44,6 +50,59 @@ export class AudioPlayer {
   loadQueue(songs: Song[], startIndex = 0): void {
     this.queue = songs;
     this.loadIndex(startIndex, true);
+  }
+
+  /**
+   * Load a single song at a specific position.
+   * Used by room mode to apply server-authoritative state.
+   */
+  loadSong(song: Song, positionSecs: number, autoplay: boolean): void {
+    this.queue = [song];
+    this.queueIndex = 0;
+    this.status = 'loading';
+    this.audio.src = song.audioUrl;
+    this.audio.currentTime = 0;
+    this.emit();
+
+    // HTMLAudioElement won't honour currentTime until metadata is loaded.
+    // We set it via a one-shot 'loadedmetadata' handler.
+    const applyPosition = () => {
+      this.audio.removeEventListener('loadedmetadata', applyPosition);
+      const clamped = Math.max(
+        0,
+        Math.min(positionSecs, isFinite(this.audio.duration) ? this.audio.duration : positionSecs),
+      );
+      this.audio.currentTime = clamped;
+      if (autoplay) {
+        void this.audio.play();
+      }
+    };
+
+    if (isFinite(this.audio.duration) && this.audio.readyState >= 1) {
+      // Metadata already available (e.g. same src re-loaded)
+      applyPosition();
+    } else {
+      this.audio.addEventListener('loadedmetadata', applyPosition);
+    }
+  }
+
+  /**
+   * Seek to positionSecs and set playing state without changing the loaded
+   * track. Used by the drift-correction loop and SEEK/PLAY/PAUSE broadcasts.
+   */
+  syncTo(positionSecs: number, isPlaying: boolean): void {
+    if (this.status === 'idle') return;
+    const clamped = Math.max(
+      0,
+      Math.min(positionSecs, isFinite(this.audio.duration) ? this.audio.duration : positionSecs),
+    );
+    this.audio.currentTime = clamped;
+    if (isPlaying && this.audio.paused) {
+      void this.audio.play();
+    } else if (!isPlaying && !this.audio.paused) {
+      this.audio.pause();
+    }
+    this.emit();
   }
 
   play(): void {
@@ -168,8 +227,11 @@ export class AudioPlayer {
   private onEnded = (): void => {
     this.status = 'ended';
     this.emit();
-    // Auto-advance to next track (wraps around).
-    this.next();
+    // Auto-advance to next track (wraps around) — disabled in room mode,
+    // where song transitions are driven by server NEXT/PREVIOUS broadcasts.
+    if (!this.roomMode) {
+      this.next();
+    }
   };
 
   private onError = (): void => {

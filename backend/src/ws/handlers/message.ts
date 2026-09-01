@@ -18,7 +18,7 @@ import { handlePlayback } from "./playback.js";
 import { handlePlaylist } from "./playlist.js";
 import { handleChat } from "./chat.js";
 
-const PLAYBACK_EVENTS = new Set<ClientEventType>(["PLAY", "PAUSE", "SEEK", "NEXT", "PREVIOUS"]);
+const PLAYBACK_EVENTS = new Set<ClientEventType>(["PLAY", "PAUSE", "SEEK", "NEXT", "PREVIOUS", "SET_SONG"]);
 const PLAYLIST_EVENTS = new Set<ClientEventType>(["PLAYLIST_ADD", "PLAYLIST_REMOVE", "PLAYLIST_REORDER"]);
 
 export async function handleMessage(

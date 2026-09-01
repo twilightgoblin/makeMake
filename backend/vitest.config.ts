@@ -11,7 +11,12 @@ export default defineConfig({
     testTimeout: 15000,
     hookTimeout: 15000,
     // Load .env before any test module
-    env: {},
+    env: {
+      // Grace period before host-transfer fires. Set to 0 so existing
+      // HOST_CHANGED tests get immediate transfer — same behaviour as before
+      // the grace-period feature was introduced.
+      WS_RECONNECT_GRACE_MS: "0",
+    },
     // TypeScript handled natively by Vitest / esbuild
     include: ["tests/**/*.test.ts"],
   },

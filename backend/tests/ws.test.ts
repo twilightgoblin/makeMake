@@ -149,7 +149,7 @@ describe("3.4 ROOM_STATE sync", () => {
     const payload = roomState.payload as RoomStatePayload;
     expect(payload.playback.isPlaying).toBe(true);
     expect(payload.playback.positionSecs).toBe(42.5);
-    expect(payload.playback.currentSongId).toBe(songId);
+    expect((payload.playback as unknown as { currentSong: { id: string } }).currentSong.id).toBe(songId);
 
     await client.close();
   });
@@ -590,5 +590,187 @@ describe("3.9 Error handling", () => {
     expect((msg.payload as { code: string }).code).toBe("PLAYLIST_ENTRY_NOT_FOUND");
 
     await client.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3.10 — Reconnect / refresh regression tests
+//
+// These tests verify the grace-period host-transfer logic introduced in
+// Phase 6. WS_RECONNECT_GRACE_MS=0 is set via vitest.config.ts so the
+// existing 3.8 HOST_CHANGED test still fires immediately.
+// For the "within grace window" tests we set the env var to a real value
+// by directly overriding process.env inside the test.
+// ---------------------------------------------------------------------------
+
+describe("3.10 Reconnect / refresh regression", () => {
+  // ── A. HOST reconnects within grace window → stays HOST ──────────────────
+
+  it("HOST reconnect within grace window preserves HOST role (no HOST_CHANGED)", async () => {
+    // Use a 300ms grace period for this test only.
+    const original = process.env["WS_RECONNECT_GRACE_MS"];
+    process.env["WS_RECONNECT_GRACE_MS"] = "300";
+
+    try {
+      const host = await createParticipant(roomId, "Ayush", "HOST");
+      const member = await createParticipant(roomId, "Alex", "MEMBER");
+
+      const { client: hostClient } = await connectAndSync(server.wsUrl, host.id, roomId);
+      const { client: memberClient } = await connectAndSync(server.wsUrl, member.id, roomId);
+      await hostClient.nextMessage(); // drain USER_JOINED for Alex
+
+      // Host disconnects (simulates browser refresh)
+      await hostClient.close();
+
+      // Member sees USER_LEFT
+      const userLeft = await memberClient.nextMessage();
+      expect(userLeft.type).toBe("USER_LEFT");
+      expect((userLeft.payload as { participantId: string }).participantId).toBe(host.id);
+
+      // Host reconnects quickly (within 300ms grace window)
+      const { client: hostClient2 } = await connectAndSync(server.wsUrl, host.id, roomId);
+      const roomStateAfterReconnect = hostClient2.drainMessages();
+
+      // Member should get USER_JOINED for the reconnect
+      const userJoined = await memberClient.nextMessage();
+      expect(userJoined.type).toBe("USER_JOINED");
+
+      // HOST_CHANGED must NOT have been sent — poll with a short timeout
+      await expect(
+        memberClient.nextMessage(400),
+      ).rejects.toThrow(/timed out/);
+
+      // DB role must still be HOST
+      const dbHost = await prisma.participant.findUnique({ where: { id: host.id } });
+      expect(dbHost!.role).toBe("HOST");
+
+      // The reconnected ROOM_STATE should show Ayush as HOST
+      const reconnectedState = await hostClient2.nextMessage().catch(() => null);
+      // (may already be drained above, just verify DB is sufficient)
+      void reconnectedState; // suppress unused warning
+      void roomStateAfterReconnect;
+
+      await hostClient2.close();
+      await memberClient.close();
+    } finally {
+      process.env["WS_RECONNECT_GRACE_MS"] = original;
+    }
+  });
+
+  // ── B. MEMBER reconnects → HOST is unchanged ─────────────────────────────
+
+  it("MEMBER reconnect does not change HOST", async () => {
+    const original = process.env["WS_RECONNECT_GRACE_MS"];
+    process.env["WS_RECONNECT_GRACE_MS"] = "300";
+
+    try {
+      const host = await createParticipant(roomId, "Ayush", "HOST");
+      const member = await createParticipant(roomId, "Alex", "MEMBER");
+
+      const { client: hostClient } = await connectAndSync(server.wsUrl, host.id, roomId);
+      const { client: memberClient } = await connectAndSync(server.wsUrl, member.id, roomId);
+      await hostClient.nextMessage(); // drain USER_JOINED
+
+      // Member disconnects and reconnects
+      await memberClient.close();
+      const userLeft = await hostClient.nextMessage();
+      expect(userLeft.type).toBe("USER_LEFT");
+
+      // Reconnect
+      const { client: memberClient2 } = await connectAndSync(server.wsUrl, member.id, roomId);
+      const userJoined = await hostClient.nextMessage();
+      expect(userJoined.type).toBe("USER_JOINED");
+
+      // HOST_CHANGED must NOT arrive
+      await expect(hostClient.nextMessage(400)).rejects.toThrow(/timed out/);
+
+      // Ayush is still HOST in DB
+      const dbHost = await prisma.participant.findUnique({ where: { id: host.id } });
+      expect(dbHost!.role).toBe("HOST");
+
+      await hostClient.close();
+      await memberClient2.close();
+    } finally {
+      process.env["WS_RECONNECT_GRACE_MS"] = original;
+    }
+  });
+
+  // ── C. HOST disconnect after grace window → HOST_CHANGED fires ───────────
+  //
+  // WS_RECONNECT_GRACE_MS=0 (set in vitest.config.ts) means the timer fires
+  // immediately, so this is essentially the same as the 3.8 test. Included
+  // here explicitly as a named regression guard.
+
+  it("HOST disconnect after grace window transfers HOST role", async () => {
+    // Grace is 0 from vitest.config.ts env — transfer fires immediately
+    const host = await createParticipant(roomId, "Ayush", "HOST");
+    const member = await createParticipant(roomId, "Alex", "MEMBER");
+
+    const { client: hostClient } = await connectAndSync(server.wsUrl, host.id, roomId);
+    const { client: memberClient } = await connectAndSync(server.wsUrl, member.id, roomId);
+    await hostClient.nextMessage(); // drain USER_JOINED
+
+    await hostClient.close();
+
+    const userLeft = await memberClient.nextMessage();
+    expect(userLeft.type).toBe("USER_LEFT");
+
+    const hostChanged = await memberClient.nextMessage();
+    expect(hostChanged.type).toBe("HOST_CHANGED");
+    expect((hostChanged.payload as { newHostId: string }).newHostId).toBe(member.id);
+
+    const dbMember = await prisma.participant.findUnique({ where: { id: member.id } });
+    expect(dbMember!.role).toBe("HOST");
+
+    await memberClient.close();
+  });
+
+  // ── D. Playlist changes propagate live via WS ────────────────────────────
+
+  it("PLAYLIST_ADD by member is received by host without page refresh", async () => {
+    const host = await createParticipant(roomId, "Ayush", "HOST");
+    const member = await createParticipant(roomId, "Alex", "MEMBER");
+
+    const { client: hostClient } = await connectAndSync(server.wsUrl, host.id, roomId);
+    const { client: memberClient } = await connectAndSync(server.wsUrl, member.id, roomId);
+    await hostClient.nextMessage(); // drain USER_JOINED
+
+    // Alex adds a song
+    memberClient.send("PLAYLIST_ADD", { songId });
+
+    // Both clients should receive PLAYLIST_ADD
+    const alexMsg = await memberClient.nextMessage();
+    const hostMsg = await hostClient.nextMessage();
+
+    expect(alexMsg.type).toBe("PLAYLIST_ADD");
+    expect(hostMsg.type).toBe("PLAYLIST_ADD");
+
+    const entry = (hostMsg.payload as { entry: { song: { id: string } } }).entry;
+    expect(entry.song.id).toBe(songId);
+
+    await hostClient.close();
+    await memberClient.close();
+  });
+
+  it("PLAYLIST_ADD by host is received by member without page refresh", async () => {
+    const host = await createParticipant(roomId, "Ayush", "HOST");
+    const member = await createParticipant(roomId, "Alex", "MEMBER");
+
+    const { client: hostClient } = await connectAndSync(server.wsUrl, host.id, roomId);
+    const { client: memberClient } = await connectAndSync(server.wsUrl, member.id, roomId);
+    await hostClient.nextMessage(); // drain USER_JOINED
+
+    // Ayush adds a song
+    hostClient.send("PLAYLIST_ADD", { songId });
+
+    const hostMsg = await hostClient.nextMessage();
+    const memberMsg = await memberClient.nextMessage();
+
+    expect(hostMsg.type).toBe("PLAYLIST_ADD");
+    expect(memberMsg.type).toBe("PLAYLIST_ADD");
+    expect((memberMsg.payload as { entry: { song: { id: string } } }).entry.song.id).toBe(songId);
+
+    await hostClient.close();
+    await memberClient.close();
   });
 });

@@ -1,34 +1,63 @@
 // -----------------------------------------------------------------------------
-// Makemake — RoomPage
+// Makemake — RoomPage  (Phase 6: realtime sync)
 //
-// Mounted at /room/:code. Responsibilities:
-//
-//   1. Identity resolution
-//      a) Creator path: reads 'participant' from sessionStorage (set by HomePage)
-//      b) Joiner path:  reads 'pendingIdentity', calls GET /rooms/:id to find
-//         the newly-created participant row by displayName, then stores the
-//         resolved identity back as 'participant'.
-//
-//   2. Room hydration
-//      GET /rooms/:id  →  seeds initial state (participants, pending requests)
-//
-//   3. WebSocket connection
-//      useRoomSocket(roomId, participantId) → live state updates
-//
-//   4. Renders
-//      - RoomHeader (code + leave button)
-//      - JoinRequestBanner (HOST only — incoming requests)
-//      - ParticipantList
-//      - PlayerArea (placeholder — wired in Phase 6)
+// Responsibilities:
+//   1. Identity resolution (sessionStorage 'participant' key)
+//   2. Room hydration (GET /rooms/:id) — initial state before WS connects
+//   3. WebSocket connection via useRoomSocket
+//   4. AudioPlayer ↔ WebSocket bridge
+//      - Song loads driven by roomState.playback.currentSong changes
+//      - HOST PlayerBar controls send WS commands; broadcast echo applies them
+//      - MEMBER AudioPlayer is entirely driven by broadcasts
+//   5. Drift correction loop (5 s interval, 0.5 s threshold)
+//   6. Playlist panel (fetch on mount, WS events keep it live)
 // -----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { getRoomDetail, resolveJoinRequest, leaveRoom, ApiError } from '../lib/api';
+import {
+  getRoomDetail,
+  resolveJoinRequest,
+  leaveRoom,
+  fetchPlaylist,
+  addToPlaylist,
+  computeLivePosition,
+  ApiError,
+  type PlaylistEntry,
+} from '../lib/api';
 import { useRoomSocket } from '../lib/useRoomSocket';
 import { PlayerBar } from '../components/PlayerBar';
 import { AudioPlayer } from '../lib/AudioPlayer';
-import type { LocalParticipant, Participant, PendingJoinRequest, PlayerState } from '../types';
+import { SongLibrary } from '../components/SongLibrary';
+import { formatDuration } from '../lib/formatDuration';
+import type {
+  LocalParticipant,
+  Participant,
+  PendingJoinRequest,
+  PlayerState,
+  Song,
+} from '../types';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DRIFT_CHECK_INTERVAL_MS = 5_000;
+const DRIFT_THRESHOLD_SECS = 0.5;
+
+const INITIAL_PLAYER_STATE: PlayerState = {
+  status: 'idle',
+  song: null,
+  positionSecs: 0,
+  durationSecs: 0,
+  volume: 0.8,
+  queueIndex: -1,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,10 +80,16 @@ function RoomHeader({
   code,
   onLeave,
   leaving,
+  isHost,
+  onClose,
+  closing,
 }: {
   code: string;
   onLeave: () => void;
   leaving: boolean;
+  isHost: boolean;
+  onClose: () => void;
+  closing: boolean;
 }) {
   return (
     <header className="room-header">
@@ -62,13 +97,25 @@ function RoomHeader({
         <span className="app-logo">♪</span>
         <span className="room-code">{code}</span>
       </div>
-      <button
-        className="btn btn--ghost btn--sm"
-        onClick={onLeave}
-        disabled={leaving}
-      >
-        {leaving ? 'Leaving…' : 'Leave'}
-      </button>
+      <div className="room-header-actions">
+        {isHost && (
+          <button
+            className="btn btn--ghost btn--sm btn--danger"
+            onClick={onClose}
+            disabled={closing || leaving}
+            title="Close room for everyone"
+          >
+            {closing ? 'Closing…' : 'Close Room'}
+          </button>
+        )}
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={onLeave}
+          disabled={leaving || closing}
+        >
+          {leaving ? 'Leaving…' : 'Leave'}
+        </button>
+      </div>
     </header>
   );
 }
@@ -80,12 +127,21 @@ function ParticipantList({ participants }: { participants: Participant[] }) {
       <ul className="participant-list" role="list">
         {participants.map((p) => (
           <li key={p.id} className="participant-item">
-            <span className="participant-role-icon" aria-label={p.role === 'HOST' ? 'Host' : 'Member'}>
+            <span
+              className="participant-role-icon"
+              aria-label={p.role === 'HOST' ? 'Host' : 'Member'}
+            >
               {p.role === 'HOST' ? '👑' : '\u00a0\u00a0\u00a0\u00a0'}
             </span>
             <span className="participant-name">{p.displayName}</span>
             {p.isOnline === false && (
-              <span className="participant-offline" title="Disconnected" aria-label="offline">○</span>
+              <span
+                className="participant-offline"
+                title="Disconnected"
+                aria-label="offline"
+              >
+                ○
+              </span>
             )}
           </li>
         ))}
@@ -154,19 +210,112 @@ function JoinRequestBanner({
 }
 
 // ---------------------------------------------------------------------------
-// Page states
+// PlaylistPanel
+// ---------------------------------------------------------------------------
+
+function PlaylistPanel({
+  playlist,
+  currentSongId,
+  participantId,
+  roomId,
+  onAddSong,
+  addingId,
+  isHost,
+  onSetSong,
+}: {
+  playlist: PlaylistEntry[];
+  currentSongId: string | null;
+  participantId: string;
+  roomId: string;
+  onAddSong: (songId: string) => void;
+  addingId: string | null;
+  isHost: boolean;
+  onSetSong: (entryId: string) => void;
+}) {
+  const [showLibrary, setShowLibrary] = useState(false);
+
+  return (
+    <section className="playlist-panel" aria-label="Playlist">
+      <div className="panel-heading-row">
+        <h2 className="panel-heading">Playlist</h2>
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => setShowLibrary((v) => !v)}
+          aria-expanded={showLibrary}
+        >
+          {showLibrary ? 'Done' : '+ Add'}
+        </button>
+      </div>
+
+      {showLibrary && (
+        <div className="playlist-add-library">
+          <SongLibrary
+            activeSongId={currentSongId}
+            onSelect={(song) => {
+              onAddSong(song.id);
+              setShowLibrary(false);
+            }}
+          />
+        </div>
+      )}
+
+      {playlist.length === 0 ? (
+        <p className="playlist-empty">No songs yet. Add one above.</p>
+      ) : (
+        <ol className="playlist-list" aria-label="Queued songs">
+          {playlist.map((entry, idx) => {
+            const isActive = entry.song.id === currentSongId;
+            return (
+              <li
+                key={entry.id}
+                className={`playlist-item${isActive ? ' playlist-item--active' : ''}${isHost && !isActive ? ' playlist-item--clickable' : ''}`}
+                onClick={isHost && !isActive ? () => onSetSong(entry.id) : undefined}
+                title={isHost && !isActive ? `Play ${entry.song.title}` : undefined}
+                role={isHost && !isActive ? 'button' : undefined}
+                tabIndex={isHost && !isActive ? 0 : undefined}
+                onKeyDown={isHost && !isActive ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') onSetSong(entry.id);
+                } : undefined}
+              >
+                <span className="playlist-item-num" aria-hidden="true">
+                  {isActive ? '▶' : idx + 1}
+                </span>
+                <img
+                  className="playlist-item-cover"
+                  src={entry.song.coverUrl}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.visibility = 'hidden';
+                  }}
+                />
+                <div className="playlist-item-meta">
+                  <span className="playlist-item-title">{entry.song.title}</span>
+                  <span className="playlist-item-artist">{entry.song.artist}</span>
+                </div>
+                <span className="playlist-item-duration">
+                  {formatDuration(entry.song.duration)}
+                </span>
+                {addingId === entry.song.id && (
+                  <span className="playlist-item-adding" aria-label="Adding…">
+                    …
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page status type
 // ---------------------------------------------------------------------------
 
 type PageStatus = 'resolving' | 'ready' | 'error' | 'closed';
-
-const INITIAL_PLAYER_STATE: PlayerState = {
-  status: 'idle',
-  song: null,
-  positionSecs: 0,
-  durationSecs: 0,
-  volume: 0.8,
-  queueIndex: -1,
-};
 
 // ---------------------------------------------------------------------------
 // RoomPage
@@ -179,23 +328,36 @@ export function RoomPage() {
   const [pageStatus, setPageStatus] = useState<PageStatus>('resolving');
   const [errorMsg, setErrorMsg] = useState('');
   const [identity, setIdentity] = useState<LocalParticipant | null>(null);
-
-  // Host-side pending requests that were loaded at hydration time (before WS).
-  // The WS hook owns them after that — we seed them into roomState via the
-  // hydration effect below.
   const [hydratedPendingRequests, setHydratedPendingRequests] = useState<
     PendingJoinRequest[]
   >([]);
-
   const [leaving, setLeaving] = useState(false);
+  const [closing, setClosing] = useState(false);
 
-  // AudioPlayer (Phase 5 — idle; wired to room in Phase 6)
+  // ── Playlist state ────────────────────────────────────────────────────────
+  // Playlist lives in roomState.playlist (managed by useRoomSocket reducer).
+  // We only need local state for the "adding" spinner.
+  const [addingId, setAddingId] = useState<string | null>(null);
+
+  // resolveSong is passed to useRoomSocket so it can resolve songIds from
+  // PLAY/PAUSE/SEEK broadcasts to full Song objects. We use a ref so the
+  // callback is stable (doesn't change identity on re-renders) while still
+  // reading the latest playlist.
+  const playlistRef = useRef<PlaylistEntry[]>([]);
+  const resolveSong = useCallback(
+    (songId: string): Song | undefined =>
+      playlistRef.current.find((e) => e.song.id === songId)?.song,
+    [],
+  );
+
+  // ── AudioPlayer ────────────────────────────────────────────────────────────
   const [playerState, setPlayerState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
   const playerRef = useRef<AudioPlayer | null>(null);
 
   useEffect(() => {
     const player = new AudioPlayer((state) => setPlayerState(state));
     player.setVolume(INITIAL_PLAYER_STATE.volume);
+    player.roomMode = true; // suppress auto-advance on 'ended'
     playerRef.current = player;
     return () => {
       player.destroy();
@@ -211,8 +373,6 @@ export function RoomPage() {
       return;
     }
 
-    // Both creator and joiner store their identity under 'participant' before
-    // navigating here. The ?joining=1 flag is informational only.
     const stored = readStoredParticipant();
     if (stored && stored.roomCode === code) {
       setIdentity(stored);
@@ -220,11 +380,13 @@ export function RoomPage() {
       return;
     }
 
-    setErrorMsg('No session found for this room. Please create or join a room first.');
+    setErrorMsg(
+      'No session found for this room. Please create or join a room first.',
+    );
     setPageStatus('error');
   }, [code]);
 
-  // ── 2. Room hydration (fetch initial state before WS connects) ────────────
+  // ── 2. Room hydration ─────────────────────────────────────────────────────
   useEffect(() => {
     if (pageStatus !== 'ready' || !identity) return;
 
@@ -232,19 +394,19 @@ export function RoomPage() {
       try {
         const data = await getRoomDetail(identity.roomId, identity.id);
         const room = data.room;
-        // Patch identity if role changed server-side (e.g. host transfer)
-        const selfParticipant = room.participants.find((p) => p.id === identity.id);
+
+        const selfParticipant = room.participants.find(
+          (p) => p.id === identity.id,
+        );
         if (selfParticipant && selfParticipant.role !== identity.role) {
           const updated = { ...identity, role: selfParticipant.role };
           setIdentity(updated);
           sessionStorage.setItem('participant', JSON.stringify(updated));
         }
-        // Seed pending join requests for HOST
         if (room.pendingJoinRequests) {
           setHydratedPendingRequests(room.pendingJoinRequests);
         }
       } catch (err) {
-        // Non-fatal — WS will provide current state on connect
         console.warn('[room] hydration failed', err);
       }
     };
@@ -252,48 +414,211 @@ export function RoomPage() {
     void hydrate();
   }, [pageStatus, identity]);
 
-  // ── 3. WebSocket ──────────────────────────────────────────────────────────
-  const handleFatalClose = useCallback(
-    (reason: string) => {
-      setErrorMsg(reason);
-      setPageStatus('closed');
-    },
-    [],
-  );
+  // ── 3. Playlist fetch ─────────────────────────────────────────────────────
+  // Seed the playlist from HTTP once on mount. After that, WS events
+  // (PLAYLIST_ADD/REMOVE/REORDER) keep it live in the reducer.
+  const seedPlaylistRef = useRef<((entries: PlaylistEntry[]) => void) | null>(null);
 
-  const { roomState, socketStatus } = useRoomSocket(
-    pageStatus === 'ready' && identity
-      ? { roomId: identity.roomId, participantId: identity.id, onFatalClose: handleFatalClose }
-      : { roomId: '', participantId: '', onFatalClose: handleFatalClose },
-  );
-
-  // Merge hydrated pending requests into the WS state on first ROOM_STATE.
-  // The WS hook doesn't know about hydrated requests until a JOIN_REQUEST
-  // event arrives. We seed them once here so the UI shows them immediately.
-  const [pendingSeeded, setPendingSeeded] = useState(false);
   useEffect(() => {
-    if (!pendingSeeded && roomState.roomId && hydratedPendingRequests.length > 0) {
-      // The WS reducer will accumulate future JOIN_REQUEST events.
-      // For already-pending requests we hold them in local state and merge
-      // for display — removing them when the WS JOIN_REQUEST_RESOLVED fires.
-      setPendingSeeded(true);
-    }
-  }, [pendingSeeded, roomState.roomId, hydratedPendingRequests]);
+    if (pageStatus !== 'ready' || !identity) return;
 
-  // Merge hydrated + WS pending requests, deduplicated by id.
+    const load = async () => {
+      try {
+        const data = await fetchPlaylist(identity.roomId, identity.id);
+        // seedPlaylist may not be available yet on the very first render;
+        // the ref is populated right after the hook call below.
+        seedPlaylistRef.current?.(data.playlist);
+      } catch (err) {
+        console.warn('[room] playlist fetch failed', err);
+      }
+    };
+
+    void load();
+  }, [pageStatus, identity]);
+
+  // ── 4. WebSocket ──────────────────────────────────────────────────────────
+  const handleFatalClose = useCallback((reason: string) => {
+    setErrorMsg(reason);
+    setPageStatus('closed');
+  }, []);
+
+  const isReady = pageStatus === 'ready' && identity !== null;
+
+  const { roomState, socketStatus, send, livePlayback, seedPlaylist } = useRoomSocket(
+    isReady
+      ? {
+          roomId: identity!.roomId,
+          participantId: identity!.id,
+          onFatalClose: handleFatalClose,
+          resolveSong,
+        }
+      : {
+          roomId: '',
+          participantId: '',
+          onFatalClose: handleFatalClose,
+          resolveSong,
+        },
+  );
+
+  // Wire the seed ref so the playlist HTTP fetch can call it.
+  seedPlaylistRef.current = seedPlaylist;
+
+  // Keep the playlist ref in sync so resolveSong always sees the latest entries.
+  useEffect(() => {
+    playlistRef.current = roomState.playlist;
+  }, [roomState.playlist]);
+
+  // ── 5. Song loading — react to playback.currentSong changes ──────────────
+  const lastLoadedSongIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+
+    const { currentSong, isPlaying, positionSecs, stateUpdatedAt } =
+      livePlayback;
+
+    if (!currentSong) {
+      // No song — reset player to idle
+      if (lastLoadedSongIdRef.current !== null) {
+        player.pause();
+        lastLoadedSongIdRef.current = null;
+      }
+      return;
+    }
+
+    if (currentSong.id === lastLoadedSongIdRef.current) {
+      // Same song — just sync play state and position
+      const livePos = computeLivePosition({ currentSong, isPlaying, positionSecs, stateUpdatedAt });
+      player.syncTo(livePos, isPlaying);
+      return;
+    }
+
+    // New song — load it at the correct position
+    lastLoadedSongIdRef.current = currentSong.id;
+    const livePos = computeLivePosition({ currentSong, isPlaying, positionSecs, stateUpdatedAt });
+    player.loadSong(currentSong, livePos, isPlaying);
+  }, [
+    // We deliberately depend only on the song id + isPlaying + position anchor
+    // so that time-update ticks from the audio element don't cause re-loads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    livePlayback.currentSong?.id,
+    livePlayback.isPlaying,
+    livePlayback.positionSecs,
+    livePlayback.stateUpdatedAt,
+  ]);
+
+  // ── 6. Drift correction loop ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!livePlayback.isPlaying || !livePlayback.currentSong) return;
+
+    const id = setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+
+      const state = player.getState();
+      if (state.status !== 'playing') return;
+
+      const expected = computeLivePosition(livePlayback);
+      const actual = state.positionSecs;
+      const drift = Math.abs(actual - expected);
+
+      if (drift > DRIFT_THRESHOLD_SECS) {
+        player.syncTo(expected, true);
+      }
+    }, DRIFT_CHECK_INTERVAL_MS);
+
+    return () => clearInterval(id);
+  }, [livePlayback]);
+
+  // ── 7. HOST PlayerBar → WS commands ──────────────────────────────────────
+  //
+  // Derive isHost from the live roomState so HOST_CHANGED events are reflected
+  // immediately without requiring a refresh. Fall back to identity.role while
+  // ROOM_STATE hasn't arrived yet (socketStatus === 'connecting').
+  const isHost = (() => {
+    if (!identity) return false;
+    const self = roomState.participants.find((p) => p.id === identity.id);
+    // If we have live WS state, trust it; otherwise fall back to stored role.
+    return self ? self.role === 'HOST' : identity.role === 'HOST';
+  })();
+
+  const handlePlay = useCallback(() => {
+    if (!isHost) return;
+    const pos = playerRef.current?.getState().positionSecs ?? 0;
+    send('PLAY', { positionSecs: pos });
+  }, [isHost, send]);
+
+  const handlePause = useCallback(() => {
+    if (!isHost) return;
+    const pos = playerRef.current?.getState().positionSecs ?? 0;
+    send('PAUSE', { positionSecs: pos });
+  }, [isHost, send]);
+
+  const handleSeek = useCallback(
+    (positionSecs: number) => {
+      if (!isHost) return;
+      send('SEEK', { positionSecs });
+    },
+    [isHost, send],
+  );
+
+  const handleNext = useCallback(() => {
+    if (!isHost) return;
+    send('NEXT', {});
+  }, [isHost, send]);
+
+  const handlePrevious = useCallback(() => {
+    if (!isHost) return;
+    send('PREVIOUS', {});
+  }, [isHost, send]);
+
+  // MEMBER volume changes are purely local (volume isn't a synced property).
+  const handleVolumeChange = useCallback((v: number) => {
+    playerRef.current?.setVolume(v);
+  }, []);
+
+  // ── 8. Add song to playlist ───────────────────────────────────────────────
+  // We send via HTTP (addToPlaylist). The server then broadcasts PLAYLIST_ADD
+  // over WS to all clients including us — the reducer handles the update.
+  // No re-fetch needed.
+  const handleAddSong = useCallback(
+    async (songId: string) => {
+      if (!identity) return;
+      setAddingId(songId);
+      try {
+        await addToPlaylist(identity.roomId, songId, identity.id);
+        // The PLAYLIST_ADD WS broadcast will update roomState.playlist.
+      } catch (err) {
+        console.error('[playlist] add failed', err);
+      } finally {
+        setAddingId(null);
+      }
+    },
+    [identity],
+  );
+
+  // HOST jumps directly to a specific playlist entry.
+  const handleSetSong = useCallback(
+    (entryId: string) => {
+      if (!isHost) return;
+      send('SET_SONG', { entryId });
+    },
+    [isHost, send],
+  );
+
+  // ── Merge hydrated + WS pending requests ─────────────────────────────────
   const mergedPendingRequests = (() => {
     const wsIds = new Set(roomState.pendingJoinRequests.map((r) => r.id));
     const extra = hydratedPendingRequests.filter((r) => !wsIds.has(r.id));
     return [...extra, ...roomState.pendingJoinRequests];
   })();
 
-  // When a request is resolved via button click (before WS echo), remove it
-  // from the hydrated list too.
   const handleResolved = useCallback((requestId: string) => {
     setHydratedPendingRequests((prev) => prev.filter((r) => r.id !== requestId));
   }, []);
 
-  // ── 4. Leave ──────────────────────────────────────────────────────────────
+  // ── Leave / Close ─────────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
     if (!identity) return;
     setLeaving(true);
@@ -301,7 +626,6 @@ export function RoomPage() {
       await leaveRoom(identity.roomId, identity.id);
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 409)) {
-        // 409 ALREADY_LEFT is fine — just navigate away
         console.warn('[room] leave failed', err);
       }
     } finally {
@@ -310,7 +634,21 @@ export function RoomPage() {
     }
   }, [identity, navigate]);
 
-  // ── Render states ──────────────────────────────────────────────────────────
+  const handleClose = useCallback(async () => {
+    if (!identity || !isHost) return;
+    setClosing(true);
+    try {
+      // Import closeRoom lazily to keep the import list clean
+      const { closeRoom } = await import('../lib/api');
+      await closeRoom(identity.roomId, identity.id);
+      // The ROOM_CLOSED WS broadcast will call onFatalClose → setPageStatus('closed')
+    } catch (err) {
+      console.error('[room] close failed', err);
+      setClosing(false);
+    }
+  }, [identity, isHost]);
+
+  // ── Render states ─────────────────────────────────────────────────────────
 
   if (pageStatus === 'resolving') {
     return (
@@ -325,7 +663,10 @@ export function RoomPage() {
     return (
       <div className="room-loading">
         <p className="room-error-msg">{errorMsg || 'Something went wrong.'}</p>
-        <button className="btn btn--primary" onClick={() => void navigate('/')}>
+        <button
+          className="btn btn--primary"
+          onClick={() => void navigate('/')}
+        >
           Back to Home
         </button>
       </div>
@@ -336,9 +677,17 @@ export function RoomPage() {
   const participants =
     roomState.participants.length > 0
       ? roomState.participants
-      : (identity ? [{ id: identity.id, displayName: identity.displayName, role: identity.role }] : []);
+      : identity
+        ? [
+            {
+              id: identity.id,
+              displayName: identity.displayName,
+              role: identity.role,
+            },
+          ]
+        : [];
 
-  const isHost = identity?.role === 'HOST';
+  const currentSongId = livePlayback.currentSong?.id ?? null;
 
   return (
     <div className="app">
@@ -346,6 +695,9 @@ export function RoomPage() {
         code={code ?? ''}
         onLeave={() => void handleLeave()}
         leaving={leaving}
+        isHost={isHost}
+        onClose={() => void handleClose()}
+        closing={closing}
       />
 
       {isHost && identity && (
@@ -359,7 +711,7 @@ export function RoomPage() {
 
       <main className="room-main">
         <div className="room-content">
-          {/* Player area — wired in Phase 6 */}
+          {/* Now-playing section */}
           <section className="room-player-area">
             {socketStatus === 'connecting' && (
               <div className="room-connecting">
@@ -367,16 +719,60 @@ export function RoomPage() {
                 <span>Connecting…</span>
               </div>
             )}
+
             {socketStatus !== 'connecting' && (
-              <div className="room-player-placeholder">
-                <p className="room-player-hint">
-                  {roomState.playback.currentSongId
-                    ? 'Music player active — Phase 6 will sync playback here.'
-                    : 'No song playing yet.'}
-                </p>
-              </div>
+              <>
+                {livePlayback.currentSong ? (
+                  <div className="room-now-playing">
+                    <img
+                      className="room-now-playing-cover"
+                      src={livePlayback.currentSong.coverUrl}
+                      alt={`Cover for ${livePlayback.currentSong.title}`}
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.visibility =
+                          'hidden';
+                      }}
+                    />
+                    <div className="room-now-playing-meta">
+                      <p className="room-now-playing-title">
+                        {livePlayback.currentSong.title}
+                      </p>
+                      <p className="room-now-playing-artist">
+                        {livePlayback.currentSong.artist}
+                      </p>
+                    </div>
+                    {!isHost && (
+                      <p className="room-member-hint">
+                        Playback is controlled by the host.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="room-player-placeholder">
+                    <p className="room-player-hint">
+                      {isHost
+                        ? 'Add a song to the playlist to start playing.'
+                        : 'Waiting for the host to start music.'}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </section>
+
+          {/* Playlist panel */}
+          {identity && (
+            <PlaylistPanel
+              playlist={roomState.playlist}
+              currentSongId={currentSongId}
+              participantId={identity.id}
+              roomId={identity.roomId}
+              onAddSong={(id) => void handleAddSong(id)}
+              addingId={addingId}
+              isHost={isHost}
+              onSetSong={handleSetSong}
+            />
+          )}
 
           <ParticipantList participants={participants} />
         </div>
@@ -384,12 +780,13 @@ export function RoomPage() {
 
       <PlayerBar
         state={playerState}
-        onPlay={() => playerRef.current?.play()}
-        onPause={() => playerRef.current?.pause()}
-        onSeek={(s) => playerRef.current?.seek(s)}
-        onNext={() => playerRef.current?.next()}
-        onPrevious={() => playerRef.current?.previous()}
-        onVolumeChange={(v) => playerRef.current?.setVolume(v)}
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onSeek={handleSeek}
+        onNext={handleNext}
+        onPrevious={handlePrevious}
+        onVolumeChange={handleVolumeChange}
+        controlsLocked={!isHost}
       />
     </div>
   );

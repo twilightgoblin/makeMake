@@ -29,6 +29,40 @@ const byParticipant = new Map<string, ConnectionRecord>();
 const byRoom = new Map<string, Set<string>>();
 
 // ---------------------------------------------------------------------------
+// Reconnect grace-period timers
+//
+// When a HOST disconnects, we don't immediately transfer their role. Instead
+// we set a timer here. If the same participantId reconnects before the timer
+// fires, we cancel it and they keep their role. If the timer fires first, the
+// host-transfer logic runs as normal.
+//
+// The grace period is configurable via WS_RECONNECT_GRACE_MS (default 8 s).
+// Tests set it to 0 so existing HOST_CHANGED behaviour is unchanged.
+// ---------------------------------------------------------------------------
+
+// participantId → pending host-transfer timer
+const pendingHostTransfers = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function setPendingTransfer(
+  participantId: string,
+  timer: ReturnType<typeof setTimeout>,
+): void {
+  pendingHostTransfers.set(participantId, timer);
+}
+
+export function clearPendingTransfer(participantId: string): void {
+  const timer = pendingHostTransfers.get(participantId);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    pendingHostTransfers.delete(participantId);
+  }
+}
+
+export function hasPendingTransfer(participantId: string): boolean {
+  return pendingHostTransfers.has(participantId);
+}
+
+// ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
 

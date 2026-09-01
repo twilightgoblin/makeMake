@@ -60,6 +60,9 @@ roomLifecycleRouter.delete(
       data: { status: "CLOSED" },
     });
 
+    // Notify all connected participants that the room is closed.
+    broadcastToRoom(roomId, makeServerEvent("ROOM_CLOSED", {}));
+
     res.json({ room: { id: updated.id, status: updated.status } });
   },
 );
