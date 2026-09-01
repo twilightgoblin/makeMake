@@ -46,14 +46,17 @@ function getGraceMs(): number {
 
 export async function handleDisconnect(participantId: string, socket?: WebSocket): Promise<void> {
   // -------------------------------------------------------------------------
-  // 0. Clear the heartbeat interval so it stops refreshing a dead connection
+  // 0. Clear all per-socket intervals/timers so they don't fire on a dead socket
   // -------------------------------------------------------------------------
   if (socket) {
-    const s = socket as WebSocket & { _heartbeat?: ReturnType<typeof setInterval> };
-    if (s._heartbeat !== undefined) {
-      clearInterval(s._heartbeat);
-      s._heartbeat = undefined;
-    }
+    const s = socket as WebSocket & {
+      _heartbeat?: ReturnType<typeof setInterval>;
+      _ping?: ReturnType<typeof setInterval>;
+      _pongTimer?: ReturnType<typeof setTimeout>;
+    };
+    if (s._heartbeat !== undefined) { clearInterval(s._heartbeat); s._heartbeat = undefined; }
+    if (s._ping      !== undefined) { clearInterval(s._ping);      s._ping      = undefined; }
+    if (s._pongTimer !== undefined) { clearTimeout(s._pongTimer);  s._pongTimer = undefined; }
   }
 
   // -------------------------------------------------------------------------

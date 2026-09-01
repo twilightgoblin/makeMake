@@ -13,6 +13,13 @@
 //     5. Broadcasts USER_JOINED to the rest of the room
 //
 // The socket's 'message' and 'close' events are also wired here.
+//
+// Server-side ping (Phase 8.3):
+//   The server sends a WS ping frame every WS_PING_INTERVAL_MS (default 15s).
+//   If no pong is received within WS_PING_TIMEOUT_MS (default 5s), the socket
+//   is forcibly terminated. This makes dead connections (e.g. instance crash,
+//   network partition) detectable in ~20s rather than waiting for the OS TCP
+//   keepalive timeout (minutes).
 // -----------------------------------------------------------------------------
 
 import type WebSocket from "ws";
@@ -42,6 +49,30 @@ import { SERVER_ID } from "../../lib/serverId.js";
 import { cancelHostGrace } from "../../lib/hostGrace.js";
 import { handleMessage } from "./message.js";
 import { handleDisconnect } from "./disconnect.js";
+
+// ---------------------------------------------------------------------------
+// Augmented socket type — extra fields stored directly on the socket object
+// so the disconnect handler can clean them up without a separate Map.
+// ---------------------------------------------------------------------------
+type AugmentedSocket = WebSocket & {
+  _heartbeat?: ReturnType<typeof setInterval>;  // presence TTL refresh
+  _ping?: ReturnType<typeof setInterval>;        // WS ping interval
+  _pongTimer?: ReturnType<typeof setTimeout>;    // pong deadline — if fires, socket is dead
+};
+
+// ---------------------------------------------------------------------------
+// Ping / pong configuration
+//   WS_PING_INTERVAL_MS  — how often to send a ping (default 15s)
+//   WS_PING_TIMEOUT_MS   — how long to wait for a pong reply (default 5s)
+//
+// Dead connection detection window = INTERVAL + TIMEOUT (default 20s).
+// ---------------------------------------------------------------------------
+function getPingIntervalMs(): number {
+  return Number(process.env["WS_PING_INTERVAL_MS"] ?? 15_000);
+}
+function getPingTimeoutMs(): number {
+  return Number(process.env["WS_PING_TIMEOUT_MS"] ?? 5_000);
+}
 
 export async function handleConnection(
   socket: WebSocket,
@@ -140,19 +171,41 @@ export async function handleConnection(
   });
 
   // -------------------------------------------------------------------------
-  // 4b. Register distributed presence in Redis and start heartbeat
+  // 4b. Register distributed presence in Redis and start heartbeat + ping
   // -------------------------------------------------------------------------
   await registerPresence(participantId, roomId, SERVER_ID);
 
-  // Refresh the TTL periodically so an active connection never expires.
-  // The interval handle is stored on the socket object so the disconnect
-  // handler can clear it without needing a separate Map.
-  const heartbeat = setInterval(() => {
+  const aug = socket as AugmentedSocket;
+
+  // Presence heartbeat — refreshes the Redis TTL so an active connection
+  // is never evicted by the presence TTL.
+  aug._heartbeat = setInterval(() => {
     void refreshPresence(participantId);
   }, HEARTBEAT_INTERVAL_MS);
 
-  // Attach to socket so disconnect.ts can clear it
-  (socket as WebSocket & { _heartbeat?: ReturnType<typeof setInterval> })._heartbeat = heartbeat;
+  // WS ping — sends a ping frame on an interval. If no pong comes back
+  // within WS_PING_TIMEOUT_MS, the socket is dead and we terminate it.
+  // The 'close' event will then fire normally and handleDisconnect runs.
+  aug._ping = setInterval(() => {
+    if (aug.readyState !== aug.OPEN) return;
+
+    // Arm the pong deadline timer. It will terminate the socket if pong
+    // doesn't arrive in time.
+    aug._pongTimer = setTimeout(() => {
+      console.warn(`[ws] pong timeout participant=${participantId} — terminating dead socket`);
+      aug.terminate(); // forcibly close — fires 'close' event
+    }, getPingTimeoutMs());
+
+    aug.ping();
+  }, getPingIntervalMs());
+
+  // Cancel the pong deadline when the pong arrives.
+  aug.on("pong", () => {
+    if (aug._pongTimer !== undefined) {
+      clearTimeout(aug._pongTimer);
+      aug._pongTimer = undefined;
+    }
+  });
 
   // -------------------------------------------------------------------------
   // 5. Send ROOM_STATE to the newly connected client
