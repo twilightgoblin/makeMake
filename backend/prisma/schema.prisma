@@ -1,0 +1,184 @@
+// -----------------------------------------------------------------------------
+// Makemake — Social Music Player
+// Phase 1: Domain Model
+// -----------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS
+// -----------------------------------------------------------------------------
+
+/// The two roles a participant can hold inside a room.
+/// HOST   — created or inherited the room. Controls playback.
+/// MEMBER — joined the room. Can chat and collaborate on the playlist.
+enum ParticipantRole {
+  HOST
+  MEMBER
+}
+
+/// Lifecycle states for a room.
+/// ACTIVE   — at least one participant is connected.
+/// INACTIVE — all participants have left; room is idle, pending TTL cleanup.
+/// CLOSED   — host explicitly closed the room; no re-entry allowed.
+enum RoomStatus {
+  ACTIVE
+  INACTIVE
+  CLOSED
+}
+
+/// Possible states for a join request.
+enum JoinRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+// -----------------------------------------------------------------------------
+// SONG
+// A first-class entity representing a track in the seeded global library.
+// Audio files live in object storage; this record holds metadata + URLs.
+// -----------------------------------------------------------------------------
+
+model Song {
+  id        String   @id @default(cuid())
+  title     String
+  artist    String
+  album     String?
+  duration  Int      // duration in seconds
+  coverUrl  String   // URL to cover art (object storage / CDN)
+  audioUrl  String   // URL to audio file  (object storage / CDN)
+  createdAt DateTime @default(now())
+
+  // A song can appear in many playlist entries across different rooms.
+  playlistEntries PlaylistEntry[]
+
+  // Rooms that currently have this song loaded as the active track.
+  currentInRooms  Room[]
+
+  @@map("songs")
+}
+
+// -----------------------------------------------------------------------------
+// ROOM
+// The central entity. Owns a playlist and has participants.
+// A room is born when a host creates it and gets a unique human-readable code.
+// -----------------------------------------------------------------------------
+
+model Room {
+  id        String     @id @default(cuid())
+  code      String     @unique  // e.g. "ABC123" — what people type to join
+  status    RoomStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // --- Current playback state ---
+  // Stored here so HTTP clients can hydrate without a WebSocket handshake.
+  // The realtime layer will keep this up to date.
+  currentSongId String?
+  currentSong   Song?   @relation(fields: [currentSongId], references: [id])
+  isPlaying     Boolean @default(false)
+  positionSecs  Float   @default(0)  // playback position in seconds
+  stateUpdatedAt DateTime? // when playback state last changed (for sync math)
+
+  participants  Participant[]
+  joinRequests  JoinRequest[]
+  playlist      PlaylistEntry[]
+  messages      Message[]
+
+  @@map("rooms")
+}
+
+// -----------------------------------------------------------------------------
+// PARTICIPANT
+// A temporary identity scoped to a single room session.
+// No auth — just a UUID + display name chosen at entry.
+// role tracks HOST vs MEMBER for permission checks.
+// -----------------------------------------------------------------------------
+
+model Participant {
+  id          String          @id @default(cuid())
+  displayName String
+  role        ParticipantRole @default(MEMBER)
+  joinedAt    DateTime        @default(now())
+  leftAt      DateTime?       // null = currently active
+
+  roomId String
+  room   Room   @relation(fields: [roomId], references: [id])
+
+  sentMessages Message[]
+
+  @@map("participants")
+}
+
+// -----------------------------------------------------------------------------
+// JOIN REQUEST
+// When someone enters a room code they don't automatically get in.
+// A JOIN_REQUEST is created, the HOST sees it, and accepts or rejects.
+// -----------------------------------------------------------------------------
+
+model JoinRequest {
+  id          String           @id @default(cuid())
+  displayName String           // display name the requester wants to use
+  status      JoinRequestStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+  resolvedAt  DateTime?        // when the host accepted/rejected
+
+  roomId String
+  room   Room   @relation(fields: [roomId], references: [id])
+
+  @@map("join_requests")
+}
+
+// -----------------------------------------------------------------------------
+// PLAYLIST ENTRY
+// A join table between Room and Song with an explicit ordering.
+// addedBy stores the participant ID of whoever added the song (informational).
+// -----------------------------------------------------------------------------
+
+model PlaylistEntry {
+  id       String @id @default(cuid())
+  position Int    // explicit ordering; 0-indexed, reordering changes this
+
+  roomId String
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  songId String
+  song   Song   @relation(fields: [songId], references: [id])
+
+  addedById String?  // participantId — nullable because they may have left
+  addedAt   DateTime @default(now())
+
+  // A song can appear only once per room playlist at a given position,
+  // but the same song can appear in the same room at different positions
+  // (e.g. user queued it twice). The unique constraint is on position per room
+  // so two entries never share the same slot.
+  @@unique([roomId, position])
+  @@map("playlist_entries")
+}
+
+// -----------------------------------------------------------------------------
+// MESSAGE
+// Chat messages sent inside a room.
+// Persisted so latecomers can see recent history.
+// -----------------------------------------------------------------------------
+
+model Message {
+  id        String   @id @default(cuid())
+  content   String
+  sentAt    DateTime @default(now())
+
+  roomId String
+  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   Participant @relation(fields: [senderId], references: [id])
+
+  @@map("messages")
+}
