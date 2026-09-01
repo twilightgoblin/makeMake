@@ -1,0 +1,1 @@
+{"version":3,"file":"requireParticipant.d.ts","sourceRoot":"","sources":["../../src/middleware/requireParticipant.ts"],"names":[],"mappings":"AASA,OAAO,EAAE,OAAO,EAAE,QAAQ,EAAE,YAAY,EAAE,MAAM,SAAS,CAAC;AAI1D,wBAAsB,kBAAkB,CACtC,GAAG,EAAE,OAAO,EACZ,GAAG,EAAE,QAAQ,EACb,IAAI,EAAE,YAAY,GACjB,OAAO,CAAC,IAAI,CAAC,CAsCf"}
