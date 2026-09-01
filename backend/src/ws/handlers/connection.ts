@@ -33,6 +33,12 @@ import {
   hasPendingTransfer,
 } from "../connectionManager.js";
 import { publishRoomEvent } from "../../lib/roomEvents.js";
+import {
+  registerPresence,
+  refreshPresence,
+  HEARTBEAT_INTERVAL_MS,
+} from "../../lib/presence.js";
+import { SERVER_ID } from "../../lib/serverId.js";
 import { handleMessage } from "./message.js";
 import { handleDisconnect } from "./disconnect.js";
 
@@ -122,6 +128,21 @@ export async function handleConnection(
   });
 
   // -------------------------------------------------------------------------
+  // 4b. Register distributed presence in Redis and start heartbeat
+  // -------------------------------------------------------------------------
+  await registerPresence(participantId, roomId, SERVER_ID);
+
+  // Refresh the TTL periodically so an active connection never expires.
+  // The interval handle is stored on the socket object so the disconnect
+  // handler can clear it without needing a separate Map.
+  const heartbeat = setInterval(() => {
+    void refreshPresence(participantId);
+  }, HEARTBEAT_INTERVAL_MS);
+
+  // Attach to socket so disconnect.ts can clear it
+  (socket as WebSocket & { _heartbeat?: ReturnType<typeof setInterval> })._heartbeat = heartbeat;
+
+  // -------------------------------------------------------------------------
   // 5. Send ROOM_STATE to the newly connected client
   // -------------------------------------------------------------------------
   const roomStatePayload: RoomStatePayload = {
@@ -173,7 +194,7 @@ export async function handleConnection(
   });
 
   socket.on("close", () => {
-    void handleDisconnect(participantId);
+    void handleDisconnect(participantId, socket);
   });
 
   socket.on("error", (err) => {

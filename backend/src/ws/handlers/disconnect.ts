@@ -33,6 +33,8 @@ import {
   setPendingTransfer,
 } from "../connectionManager.js";
 import { publishRoomEvent } from "../../lib/roomEvents.js";
+import { removePresence } from "../../lib/presence.js";
+import type WebSocket from "ws";
 
 // Grace period before a HOST disconnect triggers a host transfer.
 // Set WS_RECONNECT_GRACE_MS=0 in tests to get instant transfer (backward-compat).
@@ -41,7 +43,18 @@ function getGraceMs(): number {
   return Number(process.env["WS_RECONNECT_GRACE_MS"] ?? 8_000);
 }
 
-export async function handleDisconnect(participantId: string): Promise<void> {
+export async function handleDisconnect(participantId: string, socket?: WebSocket): Promise<void> {
+  // -------------------------------------------------------------------------
+  // 0. Clear the heartbeat interval so it stops refreshing a dead connection
+  // -------------------------------------------------------------------------
+  if (socket) {
+    const s = socket as WebSocket & { _heartbeat?: ReturnType<typeof setInterval> };
+    if (s._heartbeat !== undefined) {
+      clearInterval(s._heartbeat);
+      s._heartbeat = undefined;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // 1. Remove from connection manager
   // -------------------------------------------------------------------------
@@ -49,6 +62,11 @@ export async function handleDisconnect(participantId: string): Promise<void> {
   if (!record) return; // already cleaned up (double-close guard)
 
   const { roomId, displayName, role } = record;
+
+  // -------------------------------------------------------------------------
+  // 1b. Remove distributed presence from Redis (clean disconnect)
+  // -------------------------------------------------------------------------
+  await removePresence(participantId, roomId);
 
   // -------------------------------------------------------------------------
   // 2. Broadcast USER_LEFT to remaining room members (immediate — presence

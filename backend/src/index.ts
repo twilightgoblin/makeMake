@@ -12,6 +12,7 @@ import { roomLifecycleRouter } from "./routes/roomLifecycle.js";
 import { songsRouter } from "./routes/songs.js";
 import { playlistRouter } from "./routes/playlist.js";
 import { messagesRouter } from "./routes/messages.js";
+import { presenceRouter } from "./routes/presence.js";
 import { getRoomConnections } from "./ws/connectionManager.js";
 
 // Middleware
@@ -84,6 +85,9 @@ app.use("/rooms", playlistRouter);
 
 // Messages (GET /rooms/:id/messages)
 app.use("/rooms", messagesRouter);
+
+// Presence (GET /rooms/:id/presence)
+app.use("/rooms", presenceRouter);
 
 // ----------------------------------------------------------------------------
 // Global error handler — must be last
