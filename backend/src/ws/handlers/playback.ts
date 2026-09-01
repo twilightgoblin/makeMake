@@ -1,0 +1,234 @@
+// -----------------------------------------------------------------------------
+// Makemake — WS playback handler
+//
+// Handles: PLAY, PAUSE, SEEK, NEXT, PREVIOUS
+//
+// All playback events are HOST-only.
+// Each handler:
+//   1. Verifies caller is HOST
+//   2. Validates payload
+//   3. Updates Room row in DB (isPlaying, positionSecs, stateUpdatedAt,
+//      currentSongId for NEXT/PREVIOUS)
+//   4. Broadcasts the event to the entire room (including the caller)
+// -----------------------------------------------------------------------------
+
+import type WebSocket from "ws";
+import { prisma } from "../../lib/prisma.js";
+import {
+  makeServerEvent,
+  makeErrorEvent,
+  type ClientEnvelope,
+  type PlayPayload,
+  type PausePayload,
+  type SeekPayload,
+  type PlayBroadcastPayload,
+  type PauseBroadcastPayload,
+  type SeekBroadcastPayload,
+  type SongChangeBroadcastPayload,
+} from "../../lib/wsTypes.js";
+import { getConnection, broadcastToRoom, sendTo } from "../connectionManager.js";
+
+export async function handlePlayback(
+  socket: WebSocket,
+  participantId: string,
+  roomId: string,
+  envelope: ClientEnvelope,
+): Promise<void> {
+  // -------------------------------------------------------------------------
+  // HOST-only guard
+  // -------------------------------------------------------------------------
+  const connection = getConnection(participantId);
+  if (!connection || connection.role !== "HOST") {
+    sendTo(
+      socket,
+      makeErrorEvent("HOST_ONLY", "Only the room host can control playback.", envelope.requestId),
+    );
+    return;
+  }
+
+  // -------------------------------------------------------------------------
+  // Route to the specific event handler
+  // -------------------------------------------------------------------------
+  switch (envelope.type) {
+    case "PLAY":
+      await handlePlay(roomId, envelope);
+      break;
+    case "PAUSE":
+      await handlePause(roomId, envelope);
+      break;
+    case "SEEK":
+      await handleSeek(socket, roomId, envelope);
+      break;
+    case "NEXT":
+      await handleNext(roomId, envelope);
+      break;
+    case "PREVIOUS":
+      await handlePrevious(roomId, envelope);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PLAY
+// ---------------------------------------------------------------------------
+async function handlePlay(roomId: string, envelope: ClientEnvelope): Promise<void> {
+  const payload = envelope.payload as PlayPayload;
+  const positionSecs = typeof payload?.positionSecs === "number" ? payload.positionSecs : 0;
+
+  const now = new Date();
+  const updated = await prisma.room.update({
+    where: { id: roomId },
+    data: { isPlaying: true, positionSecs, stateUpdatedAt: now },
+    select: { currentSongId: true },
+  });
+
+  const broadcast: PlayBroadcastPayload = {
+    songId: updated.currentSongId,
+    positionSecs,
+    stateUpdatedAt: now.toISOString(),
+  };
+
+  broadcastToRoom(roomId, makeServerEvent("PLAY", broadcast));
+}
+
+// ---------------------------------------------------------------------------
+// PAUSE
+// ---------------------------------------------------------------------------
+async function handlePause(roomId: string, envelope: ClientEnvelope): Promise<void> {
+  const payload = envelope.payload as PausePayload;
+  const positionSecs = typeof payload?.positionSecs === "number" ? payload.positionSecs : 0;
+
+  const now = new Date();
+  const updated = await prisma.room.update({
+    where: { id: roomId },
+    data: { isPlaying: false, positionSecs, stateUpdatedAt: now },
+    select: { currentSongId: true },
+  });
+
+  const broadcast: PauseBroadcastPayload = {
+    songId: updated.currentSongId,
+    positionSecs,
+    stateUpdatedAt: now.toISOString(),
+  };
+
+  broadcastToRoom(roomId, makeServerEvent("PAUSE", broadcast));
+}
+
+// ---------------------------------------------------------------------------
+// SEEK
+// ---------------------------------------------------------------------------
+async function handleSeek(
+  socket: WebSocket,
+  roomId: string,
+  envelope: ClientEnvelope,
+): Promise<void> {
+  const payload = envelope.payload as SeekPayload;
+
+  if (typeof payload?.positionSecs !== "number" || payload.positionSecs < 0) {
+    sendTo(
+      socket,
+      makeErrorEvent("INVALID_PAYLOAD", "positionSecs must be a non-negative number.", envelope.requestId),
+    );
+    return;
+  }
+
+  // Validate against song duration
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { currentSongId: true, currentSong: { select: { duration: true } } },
+  });
+
+  if (room?.currentSong && payload.positionSecs > room.currentSong.duration) {
+    sendTo(
+      socket,
+      makeErrorEvent(
+        "SEEK_OUT_OF_RANGE",
+        `positionSecs ${payload.positionSecs} exceeds song duration ${room.currentSong.duration}.`,
+        envelope.requestId,
+      ),
+    );
+    return;
+  }
+
+  const now = new Date();
+  await prisma.room.update({
+    where: { id: roomId },
+    data: { positionSecs: payload.positionSecs, stateUpdatedAt: now },
+  });
+
+  const broadcast: SeekBroadcastPayload = {
+    songId: room?.currentSongId ?? null,
+    positionSecs: payload.positionSecs,
+    stateUpdatedAt: now.toISOString(),
+  };
+
+  broadcastToRoom(roomId, makeServerEvent("SEEK", broadcast));
+}
+
+// ---------------------------------------------------------------------------
+// NEXT
+// ---------------------------------------------------------------------------
+async function handleNext(roomId: string, envelope: ClientEnvelope): Promise<void> {
+  await changeSong(roomId, envelope, "next");
+}
+
+// ---------------------------------------------------------------------------
+// PREVIOUS
+// ---------------------------------------------------------------------------
+async function handlePrevious(roomId: string, envelope: ClientEnvelope): Promise<void> {
+  await changeSong(roomId, envelope, "previous");
+}
+
+// ---------------------------------------------------------------------------
+// Shared song-change logic for NEXT / PREVIOUS
+// ---------------------------------------------------------------------------
+async function changeSong(
+  roomId: string,
+  envelope: ClientEnvelope,
+  direction: "next" | "previous",
+): Promise<void> {
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { currentSongId: true, isPlaying: true, playlist: { orderBy: { position: "asc" }, select: { id: true, position: true, songId: true } } },
+  });
+
+  if (!room) return;
+
+  const playlist = room.playlist;
+  if (playlist.length === 0) return;
+
+  // Find the current entry index
+  const currentIdx = playlist.findIndex((e) => e.songId === room.currentSongId);
+
+  let targetIdx: number;
+  if (direction === "next") {
+    targetIdx = currentIdx >= 0 && currentIdx < playlist.length - 1 ? currentIdx + 1 : 0;
+  } else {
+    targetIdx = currentIdx > 0 ? currentIdx - 1 : playlist.length - 1;
+  }
+
+  const targetEntry = playlist[targetIdx];
+  if (!targetEntry) return;
+
+  const now = new Date();
+  await prisma.room.update({
+    where: { id: roomId },
+    data: {
+      currentSongId: targetEntry.songId,
+      positionSecs: 0,
+      // Preserve the playing/paused state the room was already in
+      isPlaying: room.isPlaying,
+      stateUpdatedAt: now,
+    },
+  });
+
+  const broadcast: SongChangeBroadcastPayload = {
+    songId: targetEntry.songId,
+    positionSecs: 0,
+    isPlaying: room.isPlaying,
+    stateUpdatedAt: now.toISOString(),
+  };
+
+  const eventType = direction === "next" ? "NEXT" : "PREVIOUS";
+  broadcastToRoom(roomId, makeServerEvent(eventType, broadcast));
+}
