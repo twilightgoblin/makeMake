@@ -22,7 +22,8 @@ import {
   type PlaylistRemoveBroadcastPayload,
   type PlaylistReorderBroadcastPayload,
 } from "../../lib/wsTypes.js";
-import { broadcastToRoom, sendTo } from "../connectionManager.js";
+import { sendTo } from "../connectionManager.js";
+import { publishRoomEvent } from "../../lib/roomEvents.js";
 
 export async function handlePlaylist(
   socket: WebSocket,
@@ -96,7 +97,7 @@ async function handleAdd(
     },
   };
 
-  broadcastToRoom(roomId, makeServerEvent("PLAYLIST_ADD", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_ADD", broadcast));
 
   // If the room has no current song, set this as the first one (paused at 0).
   // This is the only path that populates currentSongId for a fresh room.
@@ -113,7 +114,7 @@ async function handleAdd(
     });
 
     // Broadcast a NEXT-style event so all clients load the song (paused).
-    broadcastToRoom(roomId, makeServerEvent("NEXT", {
+    await publishRoomEvent(roomId, makeServerEvent("NEXT", {
       songId: entry.song.id,
       positionSecs: 0,
       isPlaying: false,
@@ -167,7 +168,7 @@ async function handleRemove(
     playlist: updatedPlaylist,
   };
 
-  broadcastToRoom(roomId, makeServerEvent("PLAYLIST_REMOVE", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_REMOVE", broadcast));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +206,7 @@ async function handleReorder(
       select: { id: true, position: true },
     });
     const broadcast: PlaylistReorderBroadcastPayload = { entryId: payload.entryId, playlist: current };
-    broadcastToRoom(roomId, makeServerEvent("PLAYLIST_REORDER", broadcast));
+    await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_REORDER", broadcast));
     return;
   }
 
@@ -258,5 +259,5 @@ async function handleReorder(
     playlist: updatedPlaylist,
   };
 
-  broadcastToRoom(roomId, makeServerEvent("PLAYLIST_REORDER", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_REORDER", broadcast));
 }

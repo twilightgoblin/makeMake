@@ -15,8 +15,8 @@ import { requireHost } from "../middleware/requireHost.js";
 import {
   getRoomConnections,
   sendTo,
-  broadcastToRoom,
 } from "../ws/connectionManager.js";
+import { publishRoomEvent } from "../lib/roomEvents.js";
 import {
   makeServerEvent,
   type JoinRequestPayload,
@@ -274,7 +274,7 @@ joinRequestsRouter.patch(
         roomId: participant.roomId,
       },
     };
-    broadcastToRoom(roomId, makeServerEvent("JOIN_REQUEST_RESOLVED", resolvedPayload));
+    await publishRoomEvent(roomId, makeServerEvent("JOIN_REQUEST_RESOLVED", resolvedPayload));
 
     res.json({
       joinRequest: {

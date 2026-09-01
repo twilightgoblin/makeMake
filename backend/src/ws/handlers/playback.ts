@@ -27,7 +27,8 @@ import {
   type SeekBroadcastPayload,
   type SongChangeBroadcastPayload,
 } from "../../lib/wsTypes.js";
-import { getConnection, broadcastToRoom, sendTo } from "../connectionManager.js";
+import { getConnection, sendTo } from "../connectionManager.js";
+import { publishRoomEvent } from "../../lib/roomEvents.js";
 
 export async function handlePlayback(
   socket: WebSocket,
@@ -92,7 +93,7 @@ async function handlePlay(roomId: string, envelope: ClientEnvelope): Promise<voi
     stateUpdatedAt: now.toISOString(),
   };
 
-  broadcastToRoom(roomId, makeServerEvent("PLAY", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("PLAY", broadcast));
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ async function handlePause(roomId: string, envelope: ClientEnvelope): Promise<vo
     stateUpdatedAt: now.toISOString(),
   };
 
-  broadcastToRoom(roomId, makeServerEvent("PAUSE", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("PAUSE", broadcast));
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +167,7 @@ async function handleSeek(
     stateUpdatedAt: now.toISOString(),
   };
 
-  broadcastToRoom(roomId, makeServerEvent("SEEK", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("SEEK", broadcast));
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +235,7 @@ async function changeSong(
   };
 
   const eventType = direction === "next" ? "NEXT" : "PREVIOUS";
-  broadcastToRoom(roomId, makeServerEvent(eventType, broadcast));
+  await publishRoomEvent(roomId, makeServerEvent(eventType, broadcast));
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +285,6 @@ async function handleSetSong(
   };
 
   // Reuse NEXT event type on the wire — same payload shape, clients handle it identically.
-  broadcastToRoom(roomId, makeServerEvent("NEXT", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("NEXT", broadcast));
   void updated;
 }

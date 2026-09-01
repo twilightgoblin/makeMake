@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { prisma } from "./lib/prisma.js";
 import { attachWebSocketServer } from "./ws/server.js";
+import { subscribeRoomEvents } from "./lib/roomEvents.js";
 
 // Routers
 import { roomsRouter } from "./routes/rooms.js";
@@ -94,3 +95,4 @@ const httpServer = app.listen(PORT, () => {
 });
 
 attachWebSocketServer(httpServer);
+subscribeRoomEvents();

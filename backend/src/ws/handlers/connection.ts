@@ -29,10 +29,10 @@ import {
 import {
   addConnection,
   sendTo,
-  broadcastToRoomExcept,
   clearPendingTransfer,
   hasPendingTransfer,
 } from "../connectionManager.js";
+import { publishRoomEvent } from "../../lib/roomEvents.js";
 import { handleMessage } from "./message.js";
 import { handleDisconnect } from "./disconnect.js";
 
@@ -163,7 +163,7 @@ export async function handleConnection(
     },
   };
 
-  broadcastToRoomExcept(roomId, participantId, makeServerEvent("USER_JOINED", userJoinedPayload));
+  await publishRoomEvent(roomId, makeServerEvent("USER_JOINED", userJoinedPayload), participantId);
 
   // -------------------------------------------------------------------------
   // 7. Wire message + close handlers

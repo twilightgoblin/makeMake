@@ -18,9 +18,9 @@ import { AppError, notFound } from "../lib/errors.js";
 import {
   isConnected,
   updateRole,
-  broadcastToRoom,
 } from "../ws/connectionManager.js";
 import { makeServerEvent } from "../lib/wsTypes.js";
+import { publishRoomEvent } from "../lib/roomEvents.js";
 import type { Participant } from "@prisma/client";
 
 export const roomLifecycleRouter = Router();
@@ -61,7 +61,7 @@ roomLifecycleRouter.delete(
     });
 
     // Notify all connected participants that the room is closed.
-    broadcastToRoom(roomId, makeServerEvent("ROOM_CLOSED", {}));
+    await publishRoomEvent(roomId, makeServerEvent("ROOM_CLOSED", {}));
 
     res.json({ room: { id: updated.id, status: updated.status } });
   },
@@ -110,7 +110,7 @@ roomLifecycleRouter.patch(
     });
 
     // Broadcast USER_LEFT so connected clients update their participant list.
-    broadcastToRoom(
+    await publishRoomEvent(
       roomId,
       makeServerEvent("USER_LEFT", {
         participantId,
@@ -156,7 +156,7 @@ roomLifecycleRouter.patch(
       updateRole(newHost.id, "HOST");
 
       // Broadcast HOST_CHANGED so connected clients update immediately
-      broadcastToRoom(
+      await publishRoomEvent(
         roomId,
         makeServerEvent("HOST_CHANGED", {
           newHostId: newHost.id,

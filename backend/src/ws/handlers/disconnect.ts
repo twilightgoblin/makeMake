@@ -29,10 +29,10 @@ import {
 import {
   removeConnection,
   updateRole,
-  broadcastToRoom,
   getRoomConnections,
   setPendingTransfer,
 } from "../connectionManager.js";
+import { publishRoomEvent } from "../../lib/roomEvents.js";
 
 // Grace period before a HOST disconnect triggers a host transfer.
 // Set WS_RECONNECT_GRACE_MS=0 in tests to get instant transfer (backward-compat).
@@ -55,7 +55,7 @@ export async function handleDisconnect(participantId: string): Promise<void> {
   //    is accurate as of right now)
   // -------------------------------------------------------------------------
   const userLeftPayload: UserLeftPayload = { participantId, displayName };
-  broadcastToRoom(roomId, makeServerEvent("USER_LEFT", userLeftPayload));
+  await publishRoomEvent(roomId, makeServerEvent("USER_LEFT", userLeftPayload));
 
   // -------------------------------------------------------------------------
   // 3. Host transfer — deferred by GRACE_MS
@@ -113,5 +113,5 @@ async function doHostTransfer(
     newHostId: newHost.id,
     newHostDisplayName: newHost.displayName,
   };
-  broadcastToRoom(roomId, makeServerEvent("HOST_CHANGED", hostChangedPayload));
+  await publishRoomEvent(roomId, makeServerEvent("HOST_CHANGED", hostChangedPayload));
 }

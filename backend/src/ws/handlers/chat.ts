@@ -17,7 +17,8 @@ import {
   type ChatMessagePayload,
   type ChatMessageBroadcastPayload,
 } from "../../lib/wsTypes.js";
-import { broadcastToRoom, sendTo } from "../connectionManager.js";
+import { sendTo } from "../connectionManager.js";
+import { publishRoomEvent } from "../../lib/roomEvents.js";
 
 const MAX_CONTENT_LENGTH = 1000;
 
@@ -83,5 +84,5 @@ export async function handleChat(
     sender: message.sender,
   };
 
-  broadcastToRoom(roomId, makeServerEvent("CHAT_MESSAGE", broadcast));
+  await publishRoomEvent(roomId, makeServerEvent("CHAT_MESSAGE", broadcast));
 }
