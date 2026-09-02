@@ -53,6 +53,13 @@ export interface PlaybackAnchor {
   stateUpdatedAt: string | null;
 }
 
+export interface ChatMessageRecord {
+  id: string;
+  content: string;
+  sentAt: string;
+  sender: { id: string; displayName: string };
+}
+
 export interface RoomState {
   roomId: string | null;
   status: RoomStatus | null;
@@ -70,6 +77,8 @@ export interface RoomState {
    * position at any moment.
    */
   playback: PlaybackAnchor;
+  /** Chat messages received via CHAT_MESSAGE broadcasts */
+  messages: ChatMessageRecord[];
 }
 
 const INITIAL_PLAYBACK: PlaybackAnchor = {
@@ -86,6 +95,7 @@ const INITIAL_ROOM_STATE: RoomState = {
   pendingJoinRequests: [],
   playlist: [],
   playback: INITIAL_PLAYBACK,
+  messages: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -118,6 +128,7 @@ type RoomAction =
   | { type: 'PLAYLIST_REMOVE'; payload: { entryId: string; playlist: Array<{ id: string; position: number }> } }
   | { type: 'PLAYLIST_REORDER'; payload: { entryId: string; playlist: Array<{ id: string; position: number }> } }
   | { type: 'SEED_PLAYLIST'; playlist: PlaylistEntry[] }
+  | { type: 'CHAT_MESSAGE'; payload: ChatMessageRecord }
   | { type: 'ROOM_CLOSED' }
   | { type: 'RESET' };
 
@@ -290,6 +301,13 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
 
     case 'SEED_PLAYLIST':
       return { ...state, playlist: action.playlist };
+
+    case 'CHAT_MESSAGE':
+      // Deduplicate by id (sender receives their own broadcast)
+      if (state.messages.some((m) => m.id === action.payload.id)) {
+        return state;
+      }
+      return { ...state, messages: [...state.messages, action.payload] };
 
     case 'ROOM_CLOSED':
       return { ...state, status: 'CLOSED' };
@@ -515,8 +533,18 @@ export function useRoomSocket({
           });
           break;
 
+        case 'CHAT_MESSAGE': {
+          const p = payload as {
+            id: string;
+            content: string;
+            sentAt: string;
+            sender: { id: string; displayName: string };
+          };
+          dispatch({ type: 'CHAT_MESSAGE', payload: p });
+          break;
+        }
+
         default:
-          // CHAT_MESSAGE and any future events — ignored for now
           break;
       }
     };

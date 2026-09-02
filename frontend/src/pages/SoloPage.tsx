@@ -1,15 +1,18 @@
 // -----------------------------------------------------------------------------
-// Makemake — SoloPage (Phase 4: single-player mode)
+// Makemake — SoloPage (iPod redesign)
 //
-// The original App.tsx experience, now at /solo.
-// Owns its own AudioPlayer instance for the lifetime of this route.
+// Just you and the iPod. No room panel, no player bar, no sidebar.
+// The iPod shell + click wheel is the entire interface.
+//
+// Song selection from the iPod's songs view calls onSoloSongSelect, which
+// loads the full fetched library as a queue into AudioPlayer starting at
+// the selected index.
 // -----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AudioPlayer } from '../lib/AudioPlayer';
-import { SongLibrary } from '../components/SongLibrary';
-import { PlayerBar } from '../components/PlayerBar';
+import { IPod } from '../components/ipod/IPod';
 import type { PlayerState, Song } from '../types';
 
 const INITIAL_PLAYER_STATE: PlayerState = {
@@ -36,16 +39,29 @@ export function SoloPage() {
     };
   }, []);
 
-  const handleSelect = useCallback((song: Song, queue: Song[]) => {
-    const player = playerRef.current;
-    if (!player) return;
-    const startIndex = queue.findIndex((s) => s.id === song.id);
-    player.loadQueue(queue, startIndex >= 0 ? startIndex : 0);
-  }, []);
+  // Called by IPod when user selects a song in the songs view (solo mode).
+  // Loads the entire songs[] as a queue starting at the selected index.
+  const handleSoloSongSelect = useCallback(
+    (song: Song, queue: Song[], index: number) => {
+      const player = playerRef.current;
+      if (!player) return;
+      const startIndex = queue.findIndex((s) => s.id === song.id);
+      player.loadQueue(queue, startIndex >= 0 ? startIndex : index);
+    },
+    [],
+  );
+
+  const handlePlay = useCallback(() => { playerRef.current?.play(); }, []);
+  const handlePause = useCallback(() => { playerRef.current?.pause(); }, []);
+  const handleSeek = useCallback((secs: number) => { playerRef.current?.seek(secs); }, []);
+  const handleNext = useCallback(() => { playerRef.current?.next(); }, []);
+  const handlePrevious = useCallback(() => { playerRef.current?.previous(); }, []);
+  const handleVolumeChange = useCallback((v: number) => { playerRef.current?.setVolume(v); }, []);
 
   return (
-    <div className="app">
-      <header className="app-header">
+    <div className="solo-page">
+      {/* Minimal top bar */}
+      <div className="solo-topbar">
         <button
           className="btn btn--ghost btn--sm"
           onClick={() => void navigate('/')}
@@ -53,26 +69,24 @@ export function SoloPage() {
         >
           ←
         </button>
-        <span className="app-logo">♪</span>
-        <h1 className="app-title">Solo Mode</h1>
-      </header>
+        <span className="solo-wordmark">Makemake</span>
+      </div>
 
-      <main className="app-main">
-        <SongLibrary
-          activeSongId={playerState.song?.id ?? null}
-          onSelect={handleSelect}
+      {/* The iPod is the entire experience */}
+      <div className="solo-ipod-zone">
+        <IPod
+          playerState={playerState}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onSeek={handleSeek}
+          onNext={handleNext}
+          onPrevious={handlePrevious}
+          onVolumeChange={handleVolumeChange}
+          onSoloSongSelect={handleSoloSongSelect}
+          isHost={true}
+          isRoom={false}
         />
-      </main>
-
-      <PlayerBar
-        state={playerState}
-        onPlay={() => playerRef.current?.play()}
-        onPause={() => playerRef.current?.pause()}
-        onSeek={(s) => playerRef.current?.seek(s)}
-        onNext={() => playerRef.current?.next()}
-        onPrevious={() => playerRef.current?.previous()}
-        onVolumeChange={(v) => playerRef.current?.setVolume(v)}
-      />
+      </div>
     </div>
   );
 }
