@@ -34,7 +34,8 @@ export type PlayerStatus =
   | 'playing'
   | 'paused'
   | 'ended'
-  | 'error';
+  | 'error'
+  | 'blocked';
 
 export interface PlayerState {
   status: PlayerStatus;

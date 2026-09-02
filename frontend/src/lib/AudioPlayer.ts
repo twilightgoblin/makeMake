@@ -47,9 +47,9 @@ export class AudioPlayer {
   // ---------------------------------------------------------------------------
 
   /** Replace the current queue and immediately start playing from startIndex. */
-  loadQueue(songs: Song[], startIndex = 0): void {
+  loadQueue(songs: Song[], startIndex = 0, autoplay = true, positionSecs = 0): void {
     this.queue = songs;
-    this.loadIndex(startIndex, true);
+    this.loadIndex(startIndex, autoplay, positionSecs);
   }
 
   /**
@@ -74,7 +74,7 @@ export class AudioPlayer {
       );
       this.audio.currentTime = clamped;
       if (autoplay) {
-        void this.audio.play();
+        this.safePlay();
       }
     };
 
@@ -98,16 +98,16 @@ export class AudioPlayer {
     );
     this.audio.currentTime = clamped;
     if (isPlaying && this.audio.paused) {
-      void this.audio.play();
+      this.safePlay();
     } else if (!isPlaying && !this.audio.paused) {
       this.audio.pause();
     }
     this.emit();
   }
 
-  play(): void {
+  async play(): Promise<void> {
     if (this.status === 'idle' || !this.audio.src) return;
-    void this.audio.play();
+    await this.safePlay();
   }
 
   pause(): void {
@@ -150,6 +150,10 @@ export class AudioPlayer {
     return this.buildState();
   }
 
+  getQueue(): Song[] {
+    return this.queue;
+  }
+
   /** Clean up — call when the component unmounts. */
   destroy(): void {
     this.audio.pause();
@@ -161,7 +165,7 @@ export class AudioPlayer {
   // Internal helpers
   // ---------------------------------------------------------------------------
 
-  private loadIndex(index: number, autoplay: boolean): void {
+  private loadIndex(index: number, autoplay: boolean, positionSecs = 0): void {
     const song = this.queue[index];
     if (!song) return;
 
@@ -171,8 +175,41 @@ export class AudioPlayer {
     this.audio.currentTime = 0;
     this.emit();
 
-    if (autoplay) {
-      void this.audio.play();
+    const applyPosition = () => {
+      this.audio.removeEventListener('loadedmetadata', applyPosition);
+      const clamped = Math.max(
+        0,
+        Math.min(positionSecs, isFinite(this.audio.duration) ? this.audio.duration : positionSecs),
+      );
+      this.audio.currentTime = clamped;
+      if (autoplay) {
+        void this.safePlay();
+      }
+    };
+
+    if (isFinite(this.audio.duration) && this.audio.readyState >= 1) {
+      applyPosition();
+    } else {
+      this.audio.addEventListener('loadedmetadata', applyPosition);
+    }
+  }
+
+  private async safePlay(): Promise<boolean> {
+    try {
+      await this.audio.play();
+      this.status = 'playing';
+      this.emit();
+      return true;
+    } catch (error) {
+      console.warn('[AudioPlayer] play() failed:', error);
+      if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        this.status = 'blocked';
+        this.emit();
+        return false;
+      }
+      this.status = 'error';
+      this.emit();
+      return false;
     }
   }
 

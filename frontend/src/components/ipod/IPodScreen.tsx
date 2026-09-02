@@ -24,9 +24,11 @@ import { formatDuration } from '../../lib/formatDuration';
 
 export type ScreenView =
   | 'menu'
+  | 'musicMenu'
   | 'nowPlaying'
   | 'playlist'
   | 'songs'
+  | 'search'
   | 'info';
 
 export interface MenuItem {
@@ -37,13 +39,18 @@ export interface MenuItem {
 
 export const MAIN_MENU: MenuItem[] = [
   { id: 'now-playing', label: 'Now Playing', target: 'nowPlaying' },
+  { id: 'music',       label: 'Music',       target: 'musicMenu' },
   { id: 'playlist',    label: 'Playlist',    target: 'playlist' },
-  { id: 'songs',       label: 'Add Songs',   target: 'songs' },
 ];
 
 export const SOLO_MENU: MenuItem[] = [
   { id: 'now-playing', label: 'Now Playing', target: 'nowPlaying' },
-  { id: 'songs',       label: 'Songs',       target: 'songs' },
+  { id: 'music',       label: 'Music',       target: 'musicMenu' },
+];
+
+export const MUSIC_MENU: MenuItem[] = [
+  { id: 'all-songs', label: 'All Songs', target: 'songs' },
+  { id: 'search',    label: 'Search',    target: 'search' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -62,6 +69,9 @@ export interface IPodScreenProps {
   playlist: PlaylistEntry[];
   songs: Song[];
   songsLoading: boolean;
+  songsError: string | null;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
   isHost: boolean;
   /** Whether this is a room (true) or solo (false) — affects menu items */
   isRoom: boolean;
@@ -71,6 +81,7 @@ export interface IPodScreenProps {
   onPlaylistSelect: (entry: PlaylistEntry, index: number) => void;
   /** Called when a song row is tapped (add to playlist in room / play in solo) */
   onSongSelect: (song: Song, index: number) => void;
+  onResumeClick?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +102,9 @@ function StatusBar({
   const label = (() => {
     if (view === 'nowPlaying') return isPlaying ? '▶ Now Playing' : '❚❚ Paused';
     if (view === 'playlist') return 'Playlist';
-    if (view === 'songs') return isRoom ? 'Add Songs' : 'Songs';
+    if (view === 'musicMenu') return 'Music';
+    if (view === 'songs') return 'All Songs';
+    if (view === 'search') return 'Search';
     if (view === 'info') return 'Song Info';
     return 'MAKEMAKE';
   })();
@@ -160,9 +173,11 @@ function NowPlayingView({
   playerState: PlayerState;
   isHost: boolean;
   isRoom: boolean;
+  onResumeClick?: () => void;
 }) {
   const { song, status, positionSecs, durationSecs } = playerState;
   const isPlaying = status === 'playing';
+  const isBlocked = status === 'blocked';
   const isLoading = status === 'loading';
   const progress = durationSecs > 0 ? positionSecs / durationSecs : 0;
 
@@ -212,13 +227,27 @@ function NowPlayingView({
       <div className="lcd-playback-row">
         {isLoading ? (
           <span className="lcd-play-icon">…</span>
+        ) : isBlocked ? (
+          <div 
+            className="lcd-play-controls" 
+            style={{ fontWeight: 'bold', cursor: 'pointer', padding: '4px' }}
+            onClick={onResumeClick}
+            role="button"
+            tabIndex={0}
+          >
+            ▶ TAP TO RESUME
+          </div>
         ) : (
-          <span className="lcd-play-icon" aria-label={isPlaying ? 'Playing' : 'Paused'}>
-            {isPlaying ? '▶' : '❚❚'}
-          </span>
+          <div className="lcd-play-controls">
+            <span className="lcd-play-icon" aria-hidden="true">⏮</span>
+            <span className="lcd-play-icon" aria-label={isPlaying ? 'Playing' : 'Paused'} style={{ fontSize: '14px' }}>
+              {isPlaying ? '▶' : '❚❚'}
+            </span>
+            <span className="lcd-play-icon" aria-hidden="true">⏭</span>
+          </div>
         )}
-        {isRoom && !isHost && (
-          <span className="lcd-locked-hint">host controls playback</span>
+        {isRoom && !isHost && !isBlocked && (
+          <span className="lcd-locked-hint" style={{ marginTop: '4px' }}>host controls playback</span>
         )}
       </div>
     </div>
@@ -298,6 +327,7 @@ function PlaylistView({
 function SongsView({
   songs,
   loading,
+  error,
   selectedIndex,
   currentSongId,
   isRoom,
@@ -305,6 +335,7 @@ function SongsView({
 }: {
   songs: Song[];
   loading: boolean;
+  error: string | null;
   selectedIndex: number;
   currentSongId: string | null;
   isRoom: boolean;
@@ -325,6 +356,14 @@ function SongsView({
         <div className="lcd-songs-loading">
           <div className="lcd-spinner" />
         </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="lcd-songs">
+        <div className="lcd-songs-loading">{error}</div>
       </div>
     );
   }
@@ -367,6 +406,123 @@ function SongsView({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Search view
+// ---------------------------------------------------------------------------
+
+function SearchView({
+  searchQuery,
+  onSearchChange,
+  songs,
+  loading,
+  error,
+  selectedIndex,
+  currentSongId,
+  onSelect,
+}: {
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
+  songs: Song[];
+  loading: boolean;
+  error: string | null;
+  selectedIndex: number;
+  currentSongId: string | null;
+  onSelect: (song: Song, index: number) => void;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Keep input focused so user can type on physical keyboard
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
+
+  // Scroll to selected result
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    const rows = scrollRef.current.querySelectorAll<HTMLDivElement>('.lcd-playlist-item');
+    const row = rows[selectedIndex];
+    row?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
+
+  const renderResults = () => {
+    if (loading) {
+      return (
+        <div className="lcd-songs-loading" style={{ marginTop: 20 }}>
+          <div className="lcd-spinner" />
+        </div>
+      );
+    }
+    if (error) {
+      return <div className="lcd-songs-loading" style={{ marginTop: 20 }}>{error}</div>;
+    }
+    if (songs.length === 0 && searchQuery) {
+      return <div className="lcd-songs-loading" style={{ marginTop: 20 }}>No songs found</div>;
+    }
+
+    const startIdx = Math.max(0, selectedIndex - Math.floor(4 / 2)); // fewer visible rows due to input
+    const visible = songs.slice(startIdx, startIdx + 4);
+
+    return (
+      <div className="lcd-playlist-scroll" ref={scrollRef}>
+        {visible.map((song, vi) => {
+          const realIdx = startIdx + vi;
+          const isSel = realIdx === selectedIndex;
+          const isPlaying = song.id === currentSongId;
+          return (
+            <div
+              key={song.id}
+              role="option"
+              aria-selected={isSel}
+              className={`lcd-playlist-item${isSel ? ' lcd-playlist-item--selected' : ''}`}
+              onClick={() => onSelect(song, realIdx)}
+            >
+              <span className="lcd-playlist-item-num">{realIdx + 1}</span>
+              <span className="lcd-playlist-item-title">
+                {song.title}
+                <span style={{ opacity: 0.65 }}> — {song.artist}</span>
+              </span>
+              {isPlaying && (
+                <span className="lcd-playlist-item-playing" aria-label="Now playing">▶</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="lcd-songs" aria-label="Search songs">
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--lcd-text)' }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={searchQuery}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Search songs..."
+          style={{
+            width: '100%',
+            fontFamily: 'inherit',
+            fontSize: '14px',
+            background: 'transparent',
+            border: '1px solid var(--lcd-text)',
+            color: 'var(--lcd-text)',
+            padding: '4px',
+            outline: 'none',
+          }}
+        />
+        <div style={{ fontSize: '10px', marginTop: '4px', opacity: 0.7 }}>
+          {songs.length} results
+        </div>
+      </div>
+      {renderResults()}
     </div>
   );
 }
@@ -421,12 +577,16 @@ export function IPodScreen({
   playlist,
   songs,
   songsLoading,
+  songsError,
+  searchQuery,
+  onSearchChange,
   isHost,
   isRoom,
   socketStatus,
   onMenuSelect,
   onPlaylistSelect,
   onSongSelect,
+  onResumeClick,
 }: IPodScreenProps) {
   const menuItems = isRoom ? MAIN_MENU : SOLO_MENU;
 
@@ -440,12 +600,21 @@ export function IPodScreen({
             onSelect={onMenuSelect}
           />
         );
+      case 'musicMenu':
+        return (
+          <MenuView
+            items={MUSIC_MENU}
+            selectedIndex={menuIndex}
+            onSelect={onMenuSelect}
+          />
+        );
       case 'nowPlaying':
         return (
           <NowPlayingView
             playerState={playerState}
             isHost={isHost}
             isRoom={isRoom}
+            onResumeClick={onResumeClick}
           />
         );
       case 'playlist':
@@ -462,9 +631,23 @@ export function IPodScreen({
           <SongsView
             songs={songs}
             loading={songsLoading}
+            error={songsError}
             selectedIndex={songIndex}
             currentSongId={playerState.song?.id ?? null}
             isRoom={isRoom}
+            onSelect={onSongSelect}
+          />
+        );
+      case 'search':
+        return (
+          <SearchView
+            searchQuery={searchQuery}
+            onSearchChange={onSearchChange}
+            songs={songs}
+            loading={songsLoading}
+            error={songsError}
+            selectedIndex={songIndex}
+            currentSongId={playerState.song?.id ?? null}
             onSelect={onSongSelect}
           />
         );

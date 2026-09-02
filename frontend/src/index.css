@@ -806,10 +806,17 @@ html, body, #root {
 /* Play indicator row */
 .lcd-playback-row {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 4px;
   margin-top: 2px;
+}
+.lcd-play-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
 }
 .lcd-play-icon {
   font-size: 12px;

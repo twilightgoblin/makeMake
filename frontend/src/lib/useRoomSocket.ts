@@ -17,7 +17,7 @@
 // live position without going through the reducer.
 // -----------------------------------------------------------------------------
 
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type {
   Participant,
   PendingJoinRequest,
@@ -376,6 +376,7 @@ interface UseRoomSocketReturn {
    * from WS events (PLAYLIST_ADD/REMOVE/REORDER).
    */
   seedPlaylist: (entries: PlaylistEntry[]) => void;
+  isHydrated: boolean;
 }
 
 export function useRoomSocket({
@@ -386,8 +387,8 @@ export function useRoomSocket({
 }: UseRoomSocketOptions): UseRoomSocketReturn {
   const [roomState, dispatch] = useReducer(reducer, INITIAL_ROOM_STATE);
   const socketRef = useRef<WebSocket | null>(null);
-  const socketStatusRef = useRef<SocketStatus>('connecting');
-  const [, forceUpdate] = useReducer((n: number) => n + 1, 0);
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
+  const [isHydrated, setIsHydrated] = useState(false);
 
   // Keep callbacks stable in refs so the effect doesn't re-run.
   const onFatalCloseRef = useRef(onFatalClose);
@@ -399,16 +400,13 @@ export function useRoomSocket({
     resolveSongRef.current = resolveSong;
   }, [resolveSong]);
 
-  const setSocketStatus = useCallback((s: SocketStatus) => {
-    socketStatusRef.current = s;
-    forceUpdate();
-  }, []);
 
   useEffect(() => {
     if (!roomId || !participantId) return;
 
     dispatch({ type: 'RESET' });
     setSocketStatus('connecting');
+    setIsHydrated(false);
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -438,6 +436,7 @@ export function useRoomSocket({
           // Seed the song cache from the initial state
           cacheSong(p.playback.currentSong);
           dispatch({ type: 'ROOM_STATE', payload: p });
+          setIsHydrated(true);
           break;
         }
 
@@ -595,9 +594,10 @@ export function useRoomSocket({
 
   return {
     roomState,
-    socketStatus: socketStatusRef.current,
+    socketStatus,
     send,
     livePlayback: roomState.playback,
     seedPlaylist,
+    isHydrated,
   };
 }

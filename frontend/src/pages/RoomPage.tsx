@@ -88,8 +88,8 @@ export function RoomPage() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
 
-  const [pageStatus, setPageStatus] = useState<PageStatus>('resolving');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [pageStatus, setPageStatus] = useState<PageStatus>(code ? 'resolving' : 'error');
+  const [errorMsg, setErrorMsg] = useState(code ? '' : 'Invalid room link.');
   const [identity, setIdentity] = useState<LocalParticipant | null>(null);
   const [hydratedPendingRequests, setHydratedPendingRequests] = useState<PendingJoinRequest[]>([]);
   const [leaving, setLeaving] = useState(false);
@@ -124,7 +124,7 @@ export function RoomPage() {
 
   // ── 1. Identity resolution ────────────────────────────────────────────────
   useEffect(() => {
-    if (!code) { setErrorMsg('Invalid room link.'); setPageStatus('error'); return; }
+    if (!code) return;
     const stored = readStoredParticipant();
     if (stored && stored.roomCode === code) {
       setIdentity(stored);
@@ -179,14 +179,15 @@ export function RoomPage() {
 
   const isReady = pageStatus === 'ready' && identity !== null;
 
-  const { roomState, socketStatus, send, livePlayback, seedPlaylist } = useRoomSocket(
+  const { roomState, socketStatus, send, livePlayback, seedPlaylist, isHydrated } = useRoomSocket(
     isReady
       ? { roomId: identity!.roomId, participantId: identity!.id, onFatalClose: handleFatalClose, resolveSong }
       : { roomId: '', participantId: '', onFatalClose: handleFatalClose, resolveSong },
   );
 
-  seedPlaylistRef.current = seedPlaylist;
-
+  useEffect(() => {
+    seedPlaylistRef.current = seedPlaylist;
+  }, [seedPlaylist]);
   useEffect(() => {
     playlistRef.current = roomState.playlist;
   }, [roomState.playlist]);
@@ -194,6 +195,7 @@ export function RoomPage() {
   // ── 5. Song loading ───────────────────────────────────────────────────────
   const lastLoadedSongIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!isHydrated) return;
     const player = playerRef.current;
     if (!player) return;
     const { currentSong, isPlaying, positionSecs, stateUpdatedAt } = livePlayback;
@@ -207,11 +209,11 @@ export function RoomPage() {
     }
     lastLoadedSongIdRef.current = currentSong.id;
     player.loadSong(currentSong, computeLivePosition({ currentSong, isPlaying, positionSecs, stateUpdatedAt }), isPlaying);
-  }, [livePlayback.currentSong?.id, livePlayback.isPlaying, livePlayback.positionSecs, livePlayback.stateUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isHydrated, livePlayback.currentSong?.id, livePlayback.isPlaying, livePlayback.positionSecs, livePlayback.stateUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 6. Drift correction ───────────────────────────────────────────────────
   useEffect(() => {
-    if (!livePlayback.isPlaying || !livePlayback.currentSong) return;
+    if (!isHydrated || !livePlayback.isPlaying || !livePlayback.currentSong) return;
     const id = setInterval(() => {
       const player = playerRef.current;
       if (!player) return;
@@ -267,13 +269,17 @@ export function RoomPage() {
     if (!identity) return;
     setAddingId(songId);
     try {
-      await addToPlaylist(identity.roomId, songId, identity.id);
+      const res = await addToPlaylist(identity.roomId, songId, identity.id);
+      if (isHost && playerState.status === 'idle') {
+        send('SET_SONG', { entryId: res.entry.id });
+        send('PLAY', { positionSecs: 0 });
+      }
     } catch (err) {
       console.error('[playlist] add failed', err);
     } finally {
       setAddingId(null);
     }
-  }, [identity]);
+  }, [identity, isHost, playerState.status, send]);
 
   const handleSetSong = useCallback((entryId: string) => {
     if (!isHost) return;

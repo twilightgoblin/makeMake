@@ -24,6 +24,14 @@ const INITIAL_PLAYER_STATE: PlayerState = {
   queueIndex: -1,
 };
 
+interface SoloPlaybackSnapshot {
+  queue: Song[];
+  queueIndex: number;
+  positionSecs: number;
+  wasPlaying: boolean;
+  savedAt: number;
+}
+
 export function SoloPage() {
   const navigate = useNavigate();
   const [playerState, setPlayerState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
@@ -33,10 +41,46 @@ export function SoloPage() {
     const player = new AudioPlayer((state) => setPlayerState(state));
     player.setVolume(INITIAL_PLAYER_STATE.volume);
     playerRef.current = player;
+    
+    try {
+      const raw = sessionStorage.getItem('solo_playback');
+      if (raw) {
+        const snap = JSON.parse(raw) as SoloPlaybackSnapshot;
+        if (snap.queue && snap.queue.length > 0 && snap.queueIndex >= 0) {
+          let pos = snap.positionSecs;
+          if (snap.wasPlaying) {
+             pos += (Date.now() - snap.savedAt) / 1000;
+          }
+          player.loadQueue(snap.queue, snap.queueIndex, snap.wasPlaying, pos);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to restore solo playback', err);
+    }
+
     return () => {
       player.destroy();
       playerRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const player = playerRef.current;
+      if (!player) return;
+      const state = player.getState();
+      if (state.status === 'idle') return;
+      
+      const snap: SoloPlaybackSnapshot = {
+        queue: player.getQueue(),
+        queueIndex: state.queueIndex,
+        positionSecs: state.positionSecs,
+        wasPlaying: state.status === 'playing',
+        savedAt: Date.now(),
+      };
+      sessionStorage.setItem('solo_playback', JSON.stringify(snap));
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // Called by IPod when user selects a song in the songs view (solo mode).

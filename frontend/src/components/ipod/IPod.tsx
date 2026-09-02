@@ -35,6 +35,7 @@ import {
   IPodScreen,
   MAIN_MENU,
   SOLO_MENU,
+  MUSIC_MENU,
   type ScreenView,
   type MenuItem,
 } from './IPodScreen';
@@ -93,8 +94,10 @@ function clamp(val: number, min: number, max: number) {
 function getListLength(state: IPodState, menuItems: MenuItem[], playlistLen: number, songsLen: number) {
   switch (state.view) {
     case 'menu': return menuItems.length;
+    case 'musicMenu': return MUSIC_MENU.length;
     case 'playlist': return playlistLen;
     case 'songs': return songsLen;
+    case 'search': return songsLen;
     default: return 0;
   }
 }
@@ -161,23 +164,22 @@ const INITIAL_STATE: IPodState = {
 function useSongLibrary() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
-  const loadedRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
+  const load = useCallback(async (searchQuery?: string) => {
     setLoading(true);
+    setError(null);
     try {
-      const data = await fetchSongs({ limit: 200 });
+      const data = await fetchSongs({ limit: 100, search: searchQuery });
       setSongs(data.songs);
     } catch {
-      loadedRef.current = false; // allow retry
+      setError('Unable to load songs');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  return { songs, loading, load };
+  return { songs, loading, error, load };
 }
 
 // ---------------------------------------------------------------------------
@@ -201,13 +203,29 @@ export function IPod({
   isRoom = false,
   socketStatus,
 }: IPodProps) {
-  const [state, dispatch] = useReducer(ipodReducer, INITIAL_STATE);
+  const [state, dispatch] = useReducer(ipodReducer, undefined, (): IPodState => ({
+    ...INITIAL_STATE,
+    view: playerState.song ? 'nowPlaying' : 'menu',
+  }));
   const screenRef = useRef<HTMLDivElement>(null);
-  const { songs, loading: songsLoading, load: loadSongs } = useSongLibrary();
+  const { songs, loading: songsLoading, error: songsError, load: loadSongs } = useSongLibrary();
+  
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Debounce search query changes
+  useEffect(() => {
+    if (state.view !== 'search') return;
+    const timer = setTimeout(() => {
+      loadSongs(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, state.view, loadSongs]);
 
   // Stable volume ref for wheel rotation
   const volumeRef = useRef(state.volume);
-  volumeRef.current = state.volume;
+  useEffect(() => {
+    volumeRef.current = state.volume;
+  }, [state.volume]);
 
   const menuItems = isRoom ? MAIN_MENU : SOLO_MENU;
 
@@ -216,9 +234,13 @@ export function IPod({
   // ---------------------------------------------------------------------------
 
   const navigateTo = useCallback((view: ScreenView) => {
-    if (view === 'songs') loadSongs();
+    if (view === 'songs') {
+      loadSongs();
+    } else if (view === 'search') {
+      loadSongs(searchQuery);
+    }
     dispatch({ type: 'NAVIGATE', to: view });
-  }, [loadSongs]);
+  }, [loadSongs, searchQuery]);
 
   const goBack = useCallback(() => {
     dispatch({ type: 'BACK' });
@@ -276,6 +298,7 @@ export function IPod({
     }
   }, [state, menuItems, playlist.length, songs.length, onVolumeChange]);
 
+
   // ---------------------------------------------------------------------------
   // Center button (SELECT)
   // ---------------------------------------------------------------------------
@@ -289,6 +312,13 @@ export function IPod({
         }
         break;
       }
+      case 'musicMenu': {
+        const item = MUSIC_MENU[state.menuIndex];
+        if (item) {
+          navigateTo(item.target);
+        }
+        break;
+      }
       case 'playlist': {
         const entry = playlist[state.playlistIndex];
         if (entry && isHost) {
@@ -297,15 +327,15 @@ export function IPod({
         }
         break;
       }
-      case 'songs': {
+      case 'songs':
+      case 'search': {
         const song = songs[state.songIndex];
         if (song) {
           if (isRoom) {
             onAddSong?.(song.id);
           } else {
             // Solo: start playing from this song
-            // We load a queue of all fetched songs starting at songIndex
-            // The parent gets the song via onSongSelect proxy below
+            onSoloSongSelect?.(song, songs, state.songIndex);
           }
         }
         break;
@@ -336,6 +366,7 @@ export function IPod({
     onAddSong,
     onPlay,
     onPause,
+    onSoloSongSelect,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -354,6 +385,40 @@ export function IPod({
       }
     }
   }, [state.backStack.length, state.view, goBack, navigateTo]);
+
+  // ---------------------------------------------------------------------------
+  // Global Keyboard listener for arrow navigation
+  // ---------------------------------------------------------------------------
+  
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Allow keyboard navigation even if typing in search input
+      const isInput = document.activeElement?.tagName === 'INPUT';
+      if (!isInput && document.activeElement?.tagName !== 'BODY') return; 
+
+      switch (e.key) {
+        case 'ArrowUp':
+          e.preventDefault();
+          handleRotate(-1);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleRotate(1);
+          break;
+        case 'Enter':
+          if (isInput) return; // Ignore Enter while typing to prevent accidental song selection
+          e.preventDefault();
+          handleCenterClick();
+          break;
+        case 'Escape':
+          e.preventDefault();
+          handleMenuClick();
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleRotate, handleCenterClick, handleMenuClick]);
 
   // ---------------------------------------------------------------------------
   // ⏮ / ⏭ buttons
@@ -461,12 +526,16 @@ export function IPod({
             playlist={playlist}
             songs={songs}
             songsLoading={songsLoading}
+            songsError={songsError}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
             isHost={isHost}
             isRoom={isRoom}
             socketStatus={socketStatus}
             onMenuSelect={handleMenuSelect}
             onPlaylistSelect={handlePlaylistSelect}
             onSongSelect={handleSongSelect}
+            onResumeClick={handlePlayPause}
           />
         </div>
       </div>

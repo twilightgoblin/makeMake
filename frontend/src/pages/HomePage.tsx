@@ -88,56 +88,57 @@ export function HomePage() {
     if (pollTimerRef.current) { clearTimeout(pollTimerRef.current); pollTimerRef.current = null; }
   }, []);
 
-  const poll = useCallback(async () => {
-    if (!pollActiveRef.current) return;
-    try {
-      const data = await getJoinRequestStatus(pendingRoomCode, pendingRequestId);
-      const { status } = data.joinRequest;
-
-      if (status === 'ACCEPTED') {
-        let participant = data.participant;
-        if (!participant) {
-          await new Promise((r) => setTimeout(r, 500));
-          const retry = await getJoinRequestStatus(pendingRoomCode, pendingRequestId);
-          participant = retry.participant;
-        }
-        if (!participant?.id || !participant?.roomId) {
-          if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
-          return;
-        }
-        stopPolling();
-        const identity: LocalParticipant = {
-          id: participant.id,
-          displayName: data.joinRequest.displayName,
-          role: (participant.role ?? 'MEMBER') as import('../types').ParticipantRole,
-          roomId: participant.roomId,
-          roomCode: pendingRoomCode,
-        };
-        sessionStorage.setItem('participant', JSON.stringify(identity));
-        void navigate(`/room/${pendingRoomCode}?joining=1`);
-        return;
-      }
-
-      if (status === 'REJECTED') {
-        stopPolling();
-        setPollError('Your request was rejected by the host.');
-        setView('join');
-        return;
-      }
-
-      if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
-    } catch {
-      if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
-    }
-  }, [pendingRoomCode, pendingRequestId, stopPolling, navigate]);
-
   useEffect(() => {
     if (view === 'waiting' && pendingRequestId) {
       pollActiveRef.current = true;
+      
+      const poll = async () => {
+        if (!pollActiveRef.current) return;
+        try {
+          const data = await getJoinRequestStatus(pendingRoomCode, pendingRequestId);
+          const { status } = data.joinRequest;
+
+          if (status === 'ACCEPTED') {
+            let participant = data.participant;
+            if (!participant) {
+              await new Promise((r) => setTimeout(r, 500));
+              const retry = await getJoinRequestStatus(pendingRoomCode, pendingRequestId);
+              participant = retry.participant;
+            }
+            if (!participant?.id || !participant?.roomId) {
+              if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+              return;
+            }
+            stopPolling();
+            const identity: LocalParticipant = {
+              id: participant.id,
+              displayName: data.joinRequest.displayName,
+              role: (participant.role ?? 'MEMBER') as import('../types').ParticipantRole,
+              roomId: participant.roomId,
+              roomCode: pendingRoomCode,
+            };
+            sessionStorage.setItem('participant', JSON.stringify(identity));
+            void navigate(`/room/${pendingRoomCode}?joining=1`);
+            return;
+          }
+
+          if (status === 'REJECTED') {
+            stopPolling();
+            setPollError('Your request was rejected by the host.');
+            setView('join');
+            return;
+          }
+
+          if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+        } catch {
+          if (pollActiveRef.current) pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
+        }
+      };
+
       pollTimerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
       return () => stopPolling();
     }
-  }, [view, pendingRequestId, poll, stopPolling]);
+  }, [view, pendingRequestId, pendingRoomCode, stopPolling, navigate]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
