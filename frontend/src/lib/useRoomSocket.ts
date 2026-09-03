@@ -48,6 +48,7 @@ export type SocketStatus = 'connecting' | 'open' | 'closed' | 'error';
  */
 export interface PlaybackAnchor {
   currentSong: Song | null;
+  songId?: string | null;
   isPlaying: boolean;
   positionSecs: number;
   stateUpdatedAt: string | null;
@@ -83,6 +84,7 @@ export interface RoomState {
 
 const INITIAL_PLAYBACK: PlaybackAnchor = {
   currentSong: null,
+  songId: null,
   isPlaying: false,
   positionSecs: 0,
   stateUpdatedAt: null,
@@ -146,6 +148,7 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
         })),
         playback: {
           currentSong: action.payload.playback.currentSong,
+          songId: action.payload.playback.currentSong?.id ?? null,
           isPlaying: action.payload.playback.isPlaying,
           positionSecs: action.payload.playback.positionSecs,
           stateUpdatedAt: action.payload.playback.stateUpdatedAt,
@@ -225,6 +228,7 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
         ...state,
         playback: {
           currentSong: action.song ?? state.playback.currentSong,
+          songId: action.payload.songId,
           isPlaying: true,
           positionSecs: action.payload.positionSecs,
           stateUpdatedAt: action.payload.stateUpdatedAt,
@@ -236,6 +240,7 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
         ...state,
         playback: {
           currentSong: action.song ?? state.playback.currentSong,
+          songId: action.payload.songId,
           isPlaying: false,
           positionSecs: action.payload.positionSecs,
           stateUpdatedAt: action.payload.stateUpdatedAt,
@@ -248,6 +253,7 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
         playback: {
           // SEEK doesn't change isPlaying
           currentSong: action.song ?? state.playback.currentSong,
+          songId: action.payload.songId,
           isPlaying: state.playback.isPlaying,
           positionSecs: action.payload.positionSecs,
           stateUpdatedAt: action.payload.stateUpdatedAt,
@@ -260,23 +266,39 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
         ...state,
         playback: {
           currentSong: action.song,
+          songId: action.payload.songId,
           isPlaying: action.payload.isPlaying,
           positionSecs: action.payload.positionSecs,
           stateUpdatedAt: action.payload.stateUpdatedAt,
         },
       };
 
-    case 'PLAYLIST_ADD':
+    case 'PLAYLIST_ADD': {
       // Avoid duplicates (e.g. the sender receives their own broadcast)
       if (state.playlist.some((e) => e.id === action.payload.entry.id)) {
         return state;
       }
+      
+      cacheSong(action.payload.entry.song);
+      
+      const newPlaylist = [...state.playlist, action.payload.entry].sort(
+        (a, b) => a.position - b.position,
+      );
+
+      let newPlayback = state.playback;
+      if (!newPlayback.currentSong && newPlayback.songId === action.payload.entry.song.id) {
+        newPlayback = {
+          ...newPlayback,
+          currentSong: action.payload.entry.song,
+        };
+      }
+
       return {
         ...state,
-        playlist: [...state.playlist, action.payload.entry].sort(
-          (a, b) => a.position - b.position,
-        ),
+        playlist: newPlaylist,
+        playback: newPlayback,
       };
+    }
 
     case 'PLAYLIST_REMOVE': {
       // The server sends the updated position list; apply it to preserve order.

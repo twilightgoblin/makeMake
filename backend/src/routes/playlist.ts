@@ -15,6 +15,13 @@ import { prisma } from "../lib/prisma.js";
 import { requireParticipant } from "../middleware/requireParticipant.js";
 import { notFound, invalidBody, AppError } from "../lib/errors.js";
 import type { Participant } from "@prisma/client";
+import { publishRoomEvent } from "../lib/roomEvents.js";
+import {
+  makeServerEvent,
+  type PlaylistAddBroadcastPayload,
+  type PlaylistRemoveBroadcastPayload,
+  type PlaylistReorderBroadcastPayload,
+} from "../lib/wsTypes.js";
 
 export const playlistRouter = Router();
 
@@ -117,6 +124,27 @@ playlistRouter.post("/:id/playlist", requireParticipant, async (req, res) => {
     },
   });
 
+  const broadcast: PlaylistAddBroadcastPayload = {
+    entry: {
+      id: entry.id,
+      position: entry.position,
+      addedById: entry.addedById,
+      addedAt: entry.addedAt.toISOString(),
+      song: {
+        id: entry.song.id,
+        provider: entry.song.provider,
+        externalId: entry.song.externalId,
+        title: entry.song.title,
+        artist: entry.song.artist,
+        album: entry.song.album,
+        duration: entry.song.duration,
+        coverUrl: entry.song.coverUrl,
+      },
+    },
+  };
+
+  await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_ADD", broadcast));
+
   res.status(201).json({ entry });
 });
 
@@ -161,6 +189,19 @@ playlistRouter.delete(
           AND position > ${entry.position}
       `;
     });
+
+    const updatedPlaylist = await prisma.playlistEntry.findMany({
+      where: { roomId },
+      orderBy: { position: "asc" },
+      select: { id: true, position: true },
+    });
+
+    const broadcast: PlaylistRemoveBroadcastPayload = {
+      entryId,
+      playlist: updatedPlaylist,
+    };
+
+    await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_REMOVE", broadcast));
 
     res.json({ deleted: { id: entryId } });
   },
@@ -267,6 +308,19 @@ playlistRouter.patch(
       `;
     });
 
-    res.json({ entry: { id: entryId, position: targetPosition } });
+    const updatedPlaylist = await prisma.playlistEntry.findMany({
+      where: { roomId },
+      orderBy: { position: "asc" },
+      select: { id: true, position: true },
+    });
+
+    const broadcast: PlaylistReorderBroadcastPayload = {
+      entryId,
+      playlist: updatedPlaylist,
+    };
+
+    await publishRoomEvent(roomId, makeServerEvent("PLAYLIST_REORDER", broadcast));
+
+    res.json({ entry: { id: entry.id, position: targetPosition } });
   },
 );

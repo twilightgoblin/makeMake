@@ -61,6 +61,7 @@ export type PreviousPayload = Record<string, never>;
 /** SET_SONG — HOST jumps directly to a specific playlist entry */
 export interface SetSongPayload {
   entryId: string;
+  play?: boolean;
 }
 
 export interface PlaylistAddPayload {

@@ -266,12 +266,13 @@ async function handleSetSong(
   }
 
   const now = new Date();
+  const isPlaying = payload.play === true;
   const updated = await prisma.room.update({
     where: { id: roomId },
     data: {
       currentSongId: entry.songId,
       positionSecs: 0,
-      isPlaying: false,
+      isPlaying,
       stateUpdatedAt: now,
     },
     select: { isPlaying: true },
@@ -280,7 +281,7 @@ async function handleSetSong(
   const broadcast: SongChangeBroadcastPayload = {
     songId: entry.songId,
     positionSecs: 0,
-    isPlaying: false,
+    isPlaying,
     stateUpdatedAt: now.toISOString(),
   };
 

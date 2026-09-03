@@ -300,8 +300,7 @@ export function RoomPage() {
       // If HOST and no song is currently loaded, start playing the added song immediately.
       // If a song is already playing (or paused), just leave it in the playlist.
       if (isHost && !livePlayback.currentSong) {
-        send('SET_SONG', { entryId: res.entry.id });
-        send('PLAY', { positionSecs: 0 });
+        send('SET_SONG', { entryId: res.entry.id, play: true });
       }
     } catch (err) {
       console.error('[playlist] add failed', err);

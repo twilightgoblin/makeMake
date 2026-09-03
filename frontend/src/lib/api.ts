@@ -278,6 +278,7 @@ export function fetchMessages(
 
 export interface LivePlaybackState {
   currentSong: Song | null;
+  songId?: string | null;
   isPlaying: boolean;
   /** The authoritative anchor position from the server */
   positionSecs: number;
