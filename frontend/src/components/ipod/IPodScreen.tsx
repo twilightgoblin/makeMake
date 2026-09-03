@@ -13,7 +13,7 @@
 // action the screen needs to surface. The screen itself is purely presentational.
 // -----------------------------------------------------------------------------
 
-import { useEffect, useRef, memo } from 'react';
+import { useEffect, useRef, memo, useState } from 'react';
 import type { PlayerState, Song } from '../../types';
 import type { PlaylistEntry } from '../../lib/api';
 import { formatDuration } from '../../lib/formatDuration';
@@ -184,6 +184,7 @@ function NowPlayingView({
 }) {
   const { song, status } = playerState;
   const isBlocked = status === 'blocked';
+  const [showToast, setShowToast] = useState(false);
 
   if (!song && status === 'idle') {
     return (
@@ -200,13 +201,42 @@ function NowPlayingView({
     );
   }
 
+  const handleTouch = () => {
+    if (isBlocked) return;
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 2000);
+  };
+
   return (
-    <div className="lcd-now-playing" aria-label="Now playing" style={{ padding: 0, justifyContent: 'center' }}>
+    <div 
+      className="lcd-now-playing" 
+      aria-label="Now playing" 
+      style={{ padding: 0, justifyContent: 'center', width: '100%', height: '100%', position: 'relative' }}
+      onClick={handleTouch}
+    >
+      {showToast && !isBlocked && (
+        <div style={{
+          position: 'absolute',
+          background: 'rgba(0, 0, 0, 0.75)',
+          color: 'white',
+          padding: '8px 16px',
+          borderRadius: '16px',
+          fontSize: '12px',
+          fontWeight: 'bold',
+          pointerEvents: 'none',
+          zIndex: 30
+        }}>
+          {(!isHost && isRoom) ? "Only the host can control this. You can chat and convey them." : "Use iPod buttons to control"}
+        </div>
+      )}
       {isBlocked && (
         <div 
           className="lcd-play-controls" 
           style={{ fontWeight: 'bold', cursor: 'pointer', padding: '8px 16px', background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', zIndex: 20 }}
-          onClick={onResumeClick}
+          onClick={(e) => {
+            e.stopPropagation();
+            onResumeClick?.();
+          }}
           role="button"
           tabIndex={0}
         >
@@ -649,7 +679,7 @@ export function IPodScreen({
             zIndex: 10,
             // Hide it if we are not in nowPlaying or if there is no song loaded
             opacity: (view === 'nowPlaying' && playerState.song) ? 1 : 0,
-            pointerEvents: (view === 'nowPlaying' && playerState.song) ? 'auto' : 'none',
+            pointerEvents: 'none',
           }}
         >
           <YouTubeContainer />

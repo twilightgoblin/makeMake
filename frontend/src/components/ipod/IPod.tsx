@@ -217,6 +217,18 @@ export function IPod({
   const { songs, loading: songsLoading, error: songsError, load: loadSongs } = useSongLibrary();
   
   const [searchQuery, setSearchQuery] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showRestrictedToast = useCallback(() => {
+    setToastMessage("Only the host can control this. You can chat and convey them.");
+    setTimeout(() => setToastMessage(null), 3000);
+  }, []);
+
+  const [playlistToast, setPlaylistToast] = useState(false);
+  const showPlaylistToast = useCallback(() => {
+    setPlaylistToast(true);
+    setTimeout(() => setPlaylistToast(false), 3000);
+  }, []);
 
   const navigateTo = useCallback((view: ScreenView) => {
     if (view === 'songs') {
@@ -362,6 +374,10 @@ export function IPod({
       }
       case 'nowPlaying':
         // Center click in nowPlaying = play/pause
+        if (!isHost && isRoom) {
+          showRestrictedToast();
+          return;
+        }
         if (isHost || !isRoom) {
           if (playerState.status === 'playing') {
             onPause?.();
@@ -387,6 +403,7 @@ export function IPod({
     onPlay,
     onPause,
     onSoloSongSelect,
+    showRestrictedToast,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -445,33 +462,42 @@ export function IPod({
   // ---------------------------------------------------------------------------
 
   const handlePrev = useCallback(() => {
-    if (!isHost && isRoom) return;
+    if (!isHost && isRoom) {
+      showRestrictedToast();
+      return;
+    }
     if (state.view === 'nowPlaying') {
       onPrevious?.();
     } else {
       // In list views, jump to previous item
       dispatch({ type: 'ROTATE', delta: -1, listLength: getListLength(state, menuItems, playlist.length, songs.length) });
     }
-  }, [isHost, isRoom, state, menuItems, playlist.length, songs.length, onPrevious]);
+  }, [isHost, isRoom, state, menuItems, playlist.length, songs.length, onPrevious, showRestrictedToast]);
 
   const handleNext = useCallback(() => {
-    if (!isHost && isRoom) return;
+    if (!isHost && isRoom) {
+      showRestrictedToast();
+      return;
+    }
     if (state.view === 'nowPlaying') {
       onNext?.();
     } else {
       dispatch({ type: 'ROTATE', delta: 1, listLength: getListLength(state, menuItems, playlist.length, songs.length) });
     }
-  }, [isHost, isRoom, state, menuItems, playlist.length, songs.length, onNext]);
+  }, [isHost, isRoom, state, menuItems, playlist.length, songs.length, onNext, showRestrictedToast]);
 
   // ▶/❚❚ button
   const handlePlayPause = useCallback(() => {
-    if (!isHost && isRoom) return;
+    if (!isHost && isRoom) {
+      showRestrictedToast();
+      return;
+    }
     if (playerState.status === 'playing') {
       onPause?.();
     } else {
       onPlay?.();
     }
-  }, [isHost, isRoom, playerState.status, onPause, onPlay]);
+  }, [isHost, isRoom, playerState.status, onPause, onPlay, showRestrictedToast]);
 
   // ---------------------------------------------------------------------------
   // Screen callbacks (tapping items directly)
@@ -486,8 +512,10 @@ export function IPod({
     if (isHost) {
       onSetSong?.(entry.id);
       navigateTo('nowPlaying');
+    } else if (isRoom && !isHost) {
+      showRestrictedToast();
     }
-  }, [state.playlistIndex, playlist.length, isHost, onSetSong, navigateTo]);
+  }, [state.playlistIndex, playlist.length, isHost, onSetSong, navigateTo, isRoom, showRestrictedToast]);
 
   // Song selection in songs view — works differently for room vs solo
   const handleSongSelect = useCallback((song: Song, index: number) => {
@@ -502,6 +530,7 @@ export function IPod({
         }
         if (isRoom) {
           onAddSong?.(actualSong.id);
+          showPlaylistToast();
         } else {
           onSoloSongSelect?.(actualSong, songs.map(s => s.id === song.id ? actualSong : s), index);
         }
@@ -510,7 +539,7 @@ export function IPod({
       }
     };
     runImport();
-  }, [state.songIndex, songs, isRoom, onAddSong, onSoloSongSelect]);
+  }, [state.songIndex, songs, isRoom, onAddSong, onSoloSongSelect, showPlaylistToast]);
 
   // ---------------------------------------------------------------------------
   // Auto-navigate to nowPlaying when a song starts
@@ -569,6 +598,56 @@ export function IPod({
             onSongSelect={handleSongSelect}
             onResumeClick={handlePlayPause}
           />
+          {toastMessage && (
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              background: 'rgba(0, 0, 0, 0.85)',
+              color: 'white',
+              padding: '12px 20px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              pointerEvents: 'none',
+              zIndex: 100,
+              width: '80%',
+              lineHeight: '1.4'
+            }}>
+              {toastMessage}
+            </div>
+          )}
+          {playlistToast && (
+            <div 
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                background: 'rgba(0, 0, 0, 0.85)',
+                color: 'white',
+                padding: '12px 20px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 'bold',
+                textAlign: 'center',
+                zIndex: 100,
+                width: '80%',
+                lineHeight: '1.4',
+                cursor: 'pointer',
+                pointerEvents: 'auto',
+                boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+              }}
+              onClick={() => {
+                setPlaylistToast(false);
+                navigateTo('playlist');
+              }}
+            >
+              Song added to playlist.
+            </div>
+          )}
         </div>
       </div>
 

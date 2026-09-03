@@ -103,7 +103,7 @@ export function ClickWheel({
       {/* ▶/❚❚ — bottom */}
       <button
         className={`wheel-btn wheel-btn--bottom${controlsLocked ? ' wheel-btn--locked' : ''}`}
-        onClick={controlsLocked ? undefined : onPlayPauseClick}
+        onClick={onPlayPauseClick}
         aria-label="Play / Pause"
         title={controlsLocked ? 'Host controls playback' : 'Play / Pause'}
         aria-disabled={controlsLocked}
