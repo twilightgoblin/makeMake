@@ -31,11 +31,12 @@ Makemake is a real-time social music player. Users can listen solo or create a r
 Key capabilities:
 
 - Create a room and get a human-readable join code (e.g. `ABC123`)
-- Host-controlled join request flow — guests request entry, the host accepts or rejects
-- Synchronized playback state across all room participants
+- Host-controlled join request flow — guests request entry, the host accepts or rejects via floating notifications
+- Synchronized playback state across all room participants with YouTube video player integration
 - Collaborative playlist — any participant can add, remove, and reorder songs
-- Live chat with message history persisted for latecomers
+- Live chat with message history persisted for latecomers and unread message notifications
 - Real-time presence tracking via Redis TTL heartbeats
+- iPod-inspired retro frontend interface with button controls and toast notifications
 - Horizontal scaling with Redis Pub/Sub for cross-instance event delivery
 - Automatic room expiry (configurable TTL) when all participants leave
 - Graceful host transfer — if the host disconnects, an 8-second grace period fires before the next-joined participant is promoted
@@ -82,7 +83,7 @@ PostgreSQL is the single source of truth for all durable state. Redis is ephemer
 | Load balancer    | Nginx (round-robin + passive health checks)     |
 | Dev runner       | `tsx` (watch mode)                              |
 | Test runner      | Vitest + Supertest                              |
-| Frontend         | React 19, TypeScript, Vite 8, React Router 6   |
+| Frontend         | React 19, TypeScript, Vite 8, React Router 6, YouTube API |
 
 ---
 
