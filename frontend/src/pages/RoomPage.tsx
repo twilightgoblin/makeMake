@@ -311,7 +311,7 @@ export function RoomPage() {
 
   const handleSetSong = useCallback((entryId: string) => {
     if (!isHost) return;
-    send('SET_SONG', { entryId });
+    send('SET_SONG', { entryId, play: true });
   }, [isHost, send]);
 
   // ── 10. Chat ──────────────────────────────────────────────────────────────
