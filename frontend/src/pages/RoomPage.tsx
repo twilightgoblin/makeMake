@@ -30,7 +30,7 @@ import { useRoomSocket } from '../lib/useRoomSocket';
 import type { ChatMessageRecord } from '../lib/useRoomSocket';
 import { AudioPlayer } from '../lib/AudioPlayer';
 import { IPod } from '../components/ipod/IPod';
-import { RoomPanel } from '../components/room/RoomPanel';
+import { RoomPanel, FloatingJoinRequests } from '../components/room/RoomPanel';
 import type { ChatMessage } from '../components/room/RoomPanel';
 import type {
   LocalParticipant,
@@ -99,6 +99,8 @@ export function RoomPage() {
 
   // Mobile drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [lastSeenRequestCount, setLastSeenRequestCount] = useState(0);
+  const [lastSeenMessageCount, setLastSeenMessageCount] = useState(0);
 
   // ── AudioPlayer ────────────────────────────────────────────────────────────
   const [playerState, setPlayerState] = useState<PlayerState>(INITIAL_PLAYER_STATE);
@@ -335,6 +337,16 @@ export function RoomPage() {
     setHydratedPendingRequests((prev) => prev.filter((r) => r.id !== requestId));
   }, []);
 
+  // ── Track unread counts for mobile ────────────────────────────────────────
+  useEffect(() => {
+    if (drawerOpen) {
+      setLastSeenRequestCount(mergedPendingRequests.length);
+      setLastSeenMessageCount(chatMessages.length);
+    }
+  }, [drawerOpen, mergedPendingRequests.length, chatMessages.length]);
+
+  const hasUnread = (isHost && mergedPendingRequests.length > lastSeenRequestCount) || (chatMessages.length > lastSeenMessageCount);
+
   // ── 12. Leave / Close ─────────────────────────────────────────────────────
   const handleLeave = useCallback(async () => {
     if (!identity) return;
@@ -395,7 +407,6 @@ export function RoomPage() {
       participants={participants}
       selfId={identity.id}
       isHost={isHost}
-      pendingRequests={mergedPendingRequests}
       roomId={identity.roomId}
       participantId={identity.id}
       onRequestResolved={handleRequestResolved}
@@ -456,7 +467,15 @@ export function RoomPage() {
         {socialPanel}
 
         {/* iPod zone */}
-        <div className="ipod-zone">
+        <div className="ipod-zone" style={{ position: 'relative' }}>
+          {isHost && mergedPendingRequests.length > 0 && identity && (
+            <FloatingJoinRequests
+              requests={mergedPendingRequests}
+              roomId={identity.roomId}
+              participantId={identity.id}
+              onResolved={handleRequestResolved}
+            />
+          )}
           {ipodEl}
         </div>
       </div>
@@ -488,6 +507,7 @@ export function RoomPage() {
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
           <path d="M21 21v-2a4 4 0 0 0-3-3.85" />
         </svg>
+        {hasUnread && <span className="notification-dot" aria-hidden="true" />}
       </button>
 
       {drawerOpen && (
@@ -514,7 +534,6 @@ export function RoomPage() {
                   participants={participants}
                   selfId={identity.id}
                   isHost={isHost}
-                  pendingRequests={mergedPendingRequests}
                   roomId={identity.roomId}
                   participantId={identity.id}
                   onRequestResolved={handleRequestResolved}

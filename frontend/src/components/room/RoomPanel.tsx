@@ -37,7 +37,7 @@ interface ParticipantsSectionProps {
   selfId: string;
 }
 
-interface JoinRequestsSectionProps {
+export interface FloatingJoinRequestsProps {
   requests: PendingJoinRequest[];
   roomId: string;
   participantId: string;
@@ -54,7 +54,6 @@ export interface RoomPanelProps {
   participants: Participant[];
   selfId: string;
   isHost: boolean;
-  pendingRequests: PendingJoinRequest[];
   roomId: string;
   participantId: string;
   onRequestResolved: (requestId: string) => void;
@@ -103,15 +102,15 @@ function ParticipantsSection({ participants, selfId }: ParticipantsSectionProps)
 }
 
 // ---------------------------------------------------------------------------
-// Join requests (HOST only)
+// Floating join requests (HOST only)
 // ---------------------------------------------------------------------------
 
-function JoinRequestsSection({
+export function FloatingJoinRequests({
   requests,
   roomId,
   participantId,
   onResolved,
-}: JoinRequestsSectionProps) {
+}: FloatingJoinRequestsProps) {
   const [resolving, setResolving] = useState<Record<string, boolean>>({});
 
   const handle = useCallback(
@@ -132,31 +131,35 @@ function JoinRequestsSection({
   if (requests.length === 0) return null;
 
   return (
-    <div className="room-panel-section">
-      <p className="room-panel-heading">Requests ({requests.length})</p>
-      {requests.map((r) => (
-        <div key={r.id} className="join-request-item">
-          <span className="join-request-name">{r.displayName}</span>
-          <div className="join-request-actions">
-            <button
-              className="join-request-btn join-request-btn--accept"
-              disabled={resolving[r.id]}
-              onClick={() => void handle(r.id, 'ACCEPT')}
-              aria-label={`Accept ${r.displayName}`}
-            >
-              ✓
-            </button>
-            <button
-              className="join-request-btn join-request-btn--reject"
-              disabled={resolving[r.id]}
-              onClick={() => void handle(r.id, 'REJECT')}
-              aria-label={`Reject ${r.displayName}`}
-            >
-              ✕
-            </button>
+    <div className="floating-requests-container">
+      <div className="floating-requests-header">
+        Requests ({requests.length})
+      </div>
+      <div className="floating-requests-list">
+        {requests.map((r) => (
+          <div key={r.id} className="floating-request-item">
+            <span className="join-request-name">{r.displayName}</span>
+            <div className="join-request-actions">
+              <button
+                className="join-request-btn join-request-btn--accept"
+                disabled={resolving[r.id]}
+                onClick={() => void handle(r.id, 'ACCEPT')}
+                aria-label={`Accept ${r.displayName}`}
+              >
+                ✓
+              </button>
+              <button
+                className="join-request-btn join-request-btn--reject"
+                disabled={resolving[r.id]}
+                onClick={() => void handle(r.id, 'REJECT')}
+                aria-label={`Reject ${r.displayName}`}
+              >
+                ✕
+              </button>
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -243,7 +246,6 @@ export function RoomPanel({
   participants,
   selfId,
   isHost,
-  pendingRequests,
   roomId,
   participantId,
   onRequestResolved,
@@ -251,6 +253,24 @@ export function RoomPanel({
   onSendMessage,
   roomCode,
 }: RoomPanelProps) {
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard?.writeText(roomCode);
+    setCopied(true);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => {
+      setCopied(false);
+    }, 4000);
+  }, [roomCode]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
+
   return (
     <aside className="room-panel" aria-label="Room panel">
       {/* Room code at top */}
@@ -266,29 +286,38 @@ export function RoomPanel({
           </span>
           <button
             className="btn btn--ghost btn--sm"
-            style={{ padding: '3px 8px', fontSize: 11 }}
-            onClick={() => void navigator.clipboard?.writeText(roomCode)}
+            style={{ padding: '3px 8px', fontSize: 11, minWidth: 46 }}
+            onClick={handleCopy}
             title="Copy room code"
             aria-label="Copy room code"
           >
-            Copy
+            {copied ? (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="copy-tick-svg"
+                style={{ color: 'var(--success)' }}
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              'Copy'
+            )}
           </button>
         </div>
       </div>
 
       <ParticipantsSection participants={participants} selfId={selfId} />
 
-      {isHost && (
-        <JoinRequestsSection
-          requests={pendingRequests}
-          roomId={roomId}
-          participantId={participantId}
-          onResolved={onRequestResolved}
-        />
-      )}
-
       {/* Chat fills the remaining vertical space */}
-      <div className="room-panel-section" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 0 0', overflow: 'hidden' }}>
+      <div className="room-panel-section" style={{ padding: '12px 0 0', borderBottom: 'none' }}>
         <p className="room-panel-heading" style={{ paddingLeft: 18, marginBottom: 0 }}>Chat</p>
       </div>
       <ChatSection
