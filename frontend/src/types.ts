@@ -9,19 +9,22 @@
 
 export interface Song {
   id: string;
+  provider: string;
+  externalId: string;
   title: string;
   artist: string;
   album: string | null;
   duration: number; // seconds (integer)
   coverUrl: string;
-  audioUrl: string;
+
 }
 
 export interface SongsResponse {
   songs: Song[];
-  total: number;
-  limit: number;
-  offset: number;
+  nextPageToken?: string;
+  total?: number;
+  limit?: number;
+  offset?: number;
 }
 
 // ---------------------------------------------------------------------------

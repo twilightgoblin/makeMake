@@ -70,6 +70,25 @@ export function fetchSongs(params: {
   return request<SongsResponse>(`/songs?${q.toString()}`);
 }
 
+export function searchSongs(params: {
+  limit?: number;
+  pageToken?: string;
+  q?: string;
+}): Promise<SongsResponse> {
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) query.set('limit', String(params.limit));
+  if (params.pageToken) query.set('pageToken', params.pageToken);
+  if (params.q?.trim()) query.set('q', params.q.trim());
+  return request<SongsResponse>(`/songs/search?${query.toString()}`);
+}
+
+export function importSong(provider: string, externalId: string): Promise<Song> {
+  return request<Song>('/songs/import', {
+    method: 'POST',
+    body: JSON.stringify({ provider, externalId }),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Rooms — creation
 // ---------------------------------------------------------------------------

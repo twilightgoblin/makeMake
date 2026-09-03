@@ -58,7 +58,7 @@ export function SongLibrary({ activeSongId, onSelect }: Props) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: SongsResponse = await res.json() as SongsResponse;
       setSongs(data.songs);
-      setTotal(data.total);
+      setTotal(data.total || 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load songs');
     } finally {

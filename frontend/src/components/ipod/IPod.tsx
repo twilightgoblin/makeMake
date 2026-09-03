@@ -28,7 +28,7 @@ import {
 } from 'react';
 import type { Song, PlayerState } from '../../types';
 import type { PlaylistEntry } from '../../lib/api';
-import { fetchSongs } from '../../lib/api';
+import { fetchSongs, searchSongs, importSong } from '../../lib/api';
 import { attachScreenSwipe, type SwipeDirection } from './gestures';
 import { ClickWheel } from './ClickWheel';
 import {
@@ -166,11 +166,17 @@ function useSongLibrary() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (searchQuery?: string) => {
+  const load = useCallback(async (source: 'local' | 'youtube', searchQuery?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchSongs({ limit: 100, search: searchQuery });
+      let data;
+      if (source === 'local') {
+        data = await fetchSongs({ limit: 100, search: searchQuery });
+      } else {
+        // Just fetching the first page for now, can implement infinite scroll later
+        data = await searchSongs({ limit: 20, q: searchQuery });
+      }
       setSongs(data.songs);
     } catch {
       setError('Unable to load songs');
@@ -212,12 +218,27 @@ export function IPod({
   
   const [searchQuery, setSearchQuery] = useState('');
 
+  const navigateTo = useCallback((view: ScreenView) => {
+    if (view === 'songs') {
+      loadSongs('local');
+    } else if (view === 'search') {
+      loadSongs('youtube', searchQuery);
+    }
+    dispatch({ type: 'NAVIGATE', to: view });
+  }, [loadSongs, searchQuery]);
+
+  const goBack = useCallback(() => {
+    dispatch({ type: 'BACK' });
+  }, []);
+
   // Debounce search query changes
   useEffect(() => {
     if (state.view !== 'search') return;
     const timer = setTimeout(() => {
-      loadSongs(searchQuery);
-    }, 300);
+      if (searchQuery.trim() !== '') {
+        loadSongs('youtube', searchQuery);
+      }
+    }, 500);
     return () => clearTimeout(timer);
   }, [searchQuery, state.view, loadSongs]);
 
@@ -233,18 +254,6 @@ export function IPod({
   // Navigation helpers
   // ---------------------------------------------------------------------------
 
-  const navigateTo = useCallback((view: ScreenView) => {
-    if (view === 'songs') {
-      loadSongs();
-    } else if (view === 'search') {
-      loadSongs(searchQuery);
-    }
-    dispatch({ type: 'NAVIGATE', to: view });
-  }, [loadSongs, searchQuery]);
-
-  const goBack = useCallback(() => {
-    dispatch({ type: 'BACK' });
-  }, []);
 
   // ---------------------------------------------------------------------------
   // Swipe gestures on the screen
@@ -331,12 +340,23 @@ export function IPod({
       case 'search': {
         const song = songs[state.songIndex];
         if (song) {
-          if (isRoom) {
-            onAddSong?.(song.id);
-          } else {
-            // Solo: start playing from this song
-            onSoloSongSelect?.(song, songs, state.songIndex);
-          }
+          const runImport = async () => {
+            try {
+              let actualSong = song;
+              if (song.provider === 'youtube' && song.id.startsWith('youtube_')) {
+                actualSong = await importSong(song.provider, song.externalId);
+              }
+              if (isRoom) {
+                onAddSong?.(actualSong.id);
+              } else {
+                // Solo: start playing from this song
+                onSoloSongSelect?.(actualSong, songs.map(s => s.id === song.id ? actualSong : s), state.songIndex);
+              }
+            } catch (err) {
+              console.error('Failed to import song', err);
+            }
+          };
+          runImport();
         }
         break;
       }

@@ -47,13 +47,15 @@ enum JoinRequestStatus {
 // -----------------------------------------------------------------------------
 
 model Song {
-  id        String   @id @default(cuid())
-  title     String
-  artist    String
-  album     String?
-  duration  Int      // duration in seconds
+  id          String   @id @default(cuid())
+  provider    String   @default("makemake")
+  externalId  String
+  title       String
+  artist      String
+  album       String?
+  duration    Int      // duration in seconds
   coverUrl  String   // URL to cover art (object storage / CDN)
-  audioUrl  String   // URL to audio file  (object storage / CDN)
+
   createdAt DateTime @default(now())
 
   // A song can appear in many playlist entries across different rooms.
@@ -62,6 +64,7 @@ model Song {
   // Rooms that currently have this song loaded as the active track.
   currentInRooms  Room[]
 
+  @@unique([provider, externalId])
   @@map("songs")
 }
 

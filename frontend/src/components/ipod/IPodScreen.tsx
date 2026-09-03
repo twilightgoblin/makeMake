@@ -169,6 +169,7 @@ function NowPlayingView({
   playerState,
   isHost,
   isRoom,
+  onResumeClick,
 }: {
   playerState: PlayerState;
   isHost: boolean;
@@ -198,16 +199,11 @@ function NowPlayingView({
 
   return (
     <div className="lcd-now-playing" aria-label="Now playing">
-      {song?.coverUrl ? (
-        <img
-          className="lcd-album-art"
-          src={song.coverUrl}
-          alt={`${song.title} cover`}
-          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-        />
-      ) : (
-        <div className="lcd-album-art-placeholder" aria-hidden="true">♪</div>
-      )}
+      <div id="youtube-player-portal" style={{ width: '100%', height: '140px', marginBottom: '8px' }}>
+        {/* The YouTube iframe will be visually moved here by CSS if needed, 
+            or we can just keep the iframe persistent in the root and position it here.
+            Actually, the simplest is to just have a placeholder here and position the absolute iframe over it. */}
+      </div>
 
       <span className="lcd-track-title">{song?.title ?? '—'}</span>
       <span className="lcd-track-artist">{song?.artist ?? ''}</span>
@@ -664,8 +660,25 @@ export function IPodScreen({
         socketStatus={socketStatus}
         isRoom={isRoom}
       />
-      <div className="lcd-content">
-        {renderContent()}
+      <div className="lcd-content" style={{ position: 'relative' }}>
+        {/* Persistent YouTube container */}
+        <div 
+          id="youtube-player-container" 
+          style={{
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: '100%',
+            height: '140px',
+            zIndex: 10,
+            // Hide it if we are not in nowPlaying or if there is no song loaded
+            opacity: (view === 'nowPlaying' && playerState.song) ? 1 : 0,
+            pointerEvents: (view === 'nowPlaying' && playerState.song) ? 'auto' : 'none',
+          }}
+        />
+        <div style={{ paddingTop: (view === 'nowPlaying' && playerState.song) ? '148px' : '0' }}>
+          {renderContent()}
+        </div>
       </div>
     </>
   );
