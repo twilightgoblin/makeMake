@@ -38,12 +38,13 @@ roomDetailRouter.get("/:id", requireParticipant, async (req, res) => {
       currentSong: {
         select: {
           id: true,
+          provider: true,
+          externalId: true,
           title: true,
           artist: true,
           album: true,
           duration: true,
           coverUrl: true,
-          audioUrl: true,
         },
       },
       participants: {

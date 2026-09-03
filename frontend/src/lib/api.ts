@@ -241,6 +241,38 @@ export function addToPlaylist(
 }
 
 // ---------------------------------------------------------------------------
+// Messages
+// ---------------------------------------------------------------------------
+
+export interface MessageRecord {
+  id: string;
+  content: string;
+  sentAt: string;
+  sender: { id: string; displayName: string };
+}
+
+export interface MessagesResponse {
+  messages: MessageRecord[];
+  hasMore: boolean;
+}
+
+/**
+ * GET /rooms/:id/messages — fetch recent chat history for a room.
+ * Requires X-Participant-Id header (caller must be an active participant).
+ * Returns up to 50 messages in chronological order (oldest first).
+ */
+export function fetchMessages(
+  roomId: string,
+  participantId: string,
+  limit = 50,
+): Promise<MessagesResponse> {
+  return request<MessagesResponse>(
+    `/rooms/${roomId}/messages?limit=${limit}`,
+    { headers: { 'X-Participant-Id': participantId } },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sync math
 // ---------------------------------------------------------------------------
 

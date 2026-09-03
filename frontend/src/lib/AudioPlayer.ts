@@ -33,6 +33,12 @@ export class AudioPlayer {
   private positionTimer: number | null = null;
   private currentVolume = 1;
   /**
+   * Tracks whether the last load was requested with autoplay=true.
+   * Used to call adapter.play() when the YT player signals 'cued' or 'paused'
+   * after a cueVideoById call (browser autoplay block recovery).
+   */
+  private wantsAutoplay = false;
+  /**
    * When true, the 'ended' event does NOT auto-advance to the next track.
    * RoomPage sets this so that song transitions are driven by the server
    * (NEXT/PREVIOUS broadcasts) rather than local state.
@@ -41,13 +47,13 @@ export class AudioPlayer {
 
   constructor(onChange: PlayerStateChangeCallback) {
     this.onChange = onChange;
-    
-    // We instantiate the adapter once the container is available. 
-    // In our architecture, the container is expected to be in the DOM when IPodScreen mounts.
-    // However, IPod component creates AudioPlayer before IPodScreen mounts. 
-    // So we will initialize the adapter lazily or wait for it.
-    // For simplicity, we assume a static ID 'youtube-player-container' exists.
     this.startPositionTimer();
+    // Eagerly initialise the adapter on the next microtask so the DOM is
+    // guaranteed to have rendered #youtube-player-container before we query it.
+    // Doing this here (rather than lazily on the first playback call) means
+    // one AudioPlayer = one YouTubePlayerAdapter = one YT.Player, and the
+    // player has maximum time to reach isReady before loadSong() arrives.
+    Promise.resolve().then(() => { this.getAdapter(); });
   }
 
   private getAdapter() {
@@ -60,7 +66,7 @@ export class AudioPlayer {
           onError: this.handleYTError.bind(this),
           onReady: () => {
             this.adapter?.setVolume(this.currentVolume);
-          }
+          },
         });
       }
     }
@@ -85,6 +91,7 @@ export class AudioPlayer {
     this.queue = [song];
     this.queueIndex = 0;
     this.status = 'loading';
+    this.wantsAutoplay = autoplay;
     this.emit();
 
     const adapter = this.getAdapter();
@@ -99,6 +106,7 @@ export class AudioPlayer {
    */
   syncTo(positionSecs: number, isPlaying: boolean): void {
     if (this.status === 'idle') return;
+    this.wantsAutoplay = isPlaying;
     const adapter = this.getAdapter();
     if (adapter) {
       adapter.seekTo(positionSecs);
@@ -117,6 +125,7 @@ export class AudioPlayer {
   }
 
   pause(): void {
+    this.wantsAutoplay = false;
     this.getAdapter()?.pause();
   }
 
@@ -178,6 +187,7 @@ export class AudioPlayer {
 
     this.queueIndex = index;
     this.status = 'loading';
+    this.wantsAutoplay = autoplay;
     this.emit();
 
     const adapter = this.getAdapter();
@@ -218,17 +228,34 @@ export class AudioPlayer {
   private handleYTStateChange(ytState: YTPlayerState) {
     switch (ytState) {
       case 'unstarted':
-      case 'cued':
       case 'buffering':
         this.status = 'loading';
         break;
+      case 'cued':
+        // YT fired cueVideoById (autoplay=false path) or the video is ready
+        // to play. If the caller wanted autoplay, kick play() now.
+        this.status = 'loading';
+        if (this.wantsAutoplay) {
+          this.getAdapter()?.play();
+        }
+        break;
       case 'playing':
+        this.wantsAutoplay = false;
         this.status = 'playing';
         break;
       case 'paused':
+        // If the browser blocked autoplay, YT fires paused immediately after
+        // loadVideoById. Retry play() once — the user gesture that triggered
+        // the original load is still within the browser's activation window.
+        if (this.wantsAutoplay) {
+          this.wantsAutoplay = false; // prevent infinite loop
+          this.getAdapter()?.play();
+          return; // don't emit 'paused' — we're about to play
+        }
         this.status = 'paused';
         break;
       case 'ended':
+        this.wantsAutoplay = false;
         this.status = 'ended';
         this.emit();
         if (!this.roomMode) {

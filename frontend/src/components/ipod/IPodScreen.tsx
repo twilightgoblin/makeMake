@@ -13,7 +13,7 @@
 // action the screen needs to surface. The screen itself is purely presentational.
 // -----------------------------------------------------------------------------
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo } from 'react';
 import type { PlayerState, Song } from '../../types';
 import type { PlaylistEntry } from '../../lib/api';
 import { formatDuration } from '../../lib/formatDuration';
@@ -91,16 +91,22 @@ export interface IPodScreenProps {
 function StatusBar({
   view,
   isPlaying,
+  isLoading,
   socketStatus,
   isRoom,
 }: {
   view: ScreenView;
   isPlaying: boolean;
+  isLoading: boolean;
   socketStatus?: string;
   isRoom: boolean;
 }) {
   const label = (() => {
-    if (view === 'nowPlaying') return isPlaying ? '▶ Now Playing' : '❚❚ Paused';
+    if (view === 'nowPlaying') {
+      if (isPlaying) return '▶ Now Playing';
+      if (isLoading) return '… Loading';
+      return '❚❚ Paused';
+    }
     if (view === 'playlist') return 'Playlist';
     if (view === 'musicMenu') return 'Music';
     if (view === 'songs') return 'All Songs';
@@ -176,11 +182,8 @@ function NowPlayingView({
   isRoom: boolean;
   onResumeClick?: () => void;
 }) {
-  const { song, status, positionSecs, durationSecs } = playerState;
-  const isPlaying = status === 'playing';
+  const { song, status } = playerState;
   const isBlocked = status === 'blocked';
-  const isLoading = status === 'loading';
-  const progress = durationSecs > 0 ? positionSecs / durationSecs : 0;
 
   if (!song && status === 'idle') {
     return (
@@ -198,54 +201,18 @@ function NowPlayingView({
   }
 
   return (
-    <div className="lcd-now-playing" aria-label="Now playing">
-      <div id="youtube-player-portal" style={{ width: '100%', height: '140px', marginBottom: '8px' }}>
-        {/* The YouTube iframe will be visually moved here by CSS if needed, 
-            or we can just keep the iframe persistent in the root and position it here.
-            Actually, the simplest is to just have a placeholder here and position the absolute iframe over it. */}
-      </div>
-
-      <span className="lcd-track-title">{song?.title ?? '—'}</span>
-      <span className="lcd-track-artist">{song?.artist ?? ''}</span>
-
-      {/* Progress bar */}
-      <div className="lcd-progress-row" aria-label="Playback progress">
-        <span className="lcd-time">{formatDuration(positionSecs)}</span>
-        <div className="lcd-progress-track" role="progressbar" aria-valuenow={positionSecs} aria-valuemax={durationSecs}>
-          <div
-            className="lcd-progress-fill"
-            style={{ width: `${Math.min(progress * 100, 100)}%` }}
-          />
+    <div className="lcd-now-playing" aria-label="Now playing" style={{ padding: 0, justifyContent: 'center' }}>
+      {isBlocked && (
+        <div 
+          className="lcd-play-controls" 
+          style={{ fontWeight: 'bold', cursor: 'pointer', padding: '8px 16px', background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: '8px', zIndex: 20 }}
+          onClick={onResumeClick}
+          role="button"
+          tabIndex={0}
+        >
+          ▶ TAP TO RESUME
         </div>
-        <span className="lcd-time">{formatDuration(durationSecs)}</span>
-      </div>
-
-      <div className="lcd-playback-row">
-        {isLoading ? (
-          <span className="lcd-play-icon">…</span>
-        ) : isBlocked ? (
-          <div 
-            className="lcd-play-controls" 
-            style={{ fontWeight: 'bold', cursor: 'pointer', padding: '4px' }}
-            onClick={onResumeClick}
-            role="button"
-            tabIndex={0}
-          >
-            ▶ TAP TO RESUME
-          </div>
-        ) : (
-          <div className="lcd-play-controls">
-            <span className="lcd-play-icon" aria-hidden="true">⏮</span>
-            <span className="lcd-play-icon" aria-label={isPlaying ? 'Playing' : 'Paused'} style={{ fontSize: '14px' }}>
-              {isPlaying ? '▶' : '❚❚'}
-            </span>
-            <span className="lcd-play-icon" aria-hidden="true">⏭</span>
-          </div>
-        )}
-        {isRoom && !isHost && !isBlocked && (
-          <span className="lcd-locked-hint" style={{ marginTop: '4px' }}>host controls playback</span>
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -561,6 +528,14 @@ function InfoView({ song }: { song: Song | null }) {
 }
 
 // ---------------------------------------------------------------------------
+// YouTube Container (Memoized to prevent React from destroying iframe)
+// ---------------------------------------------------------------------------
+
+const YouTubeContainer = memo(() => {
+  return <div id="youtube-player-container" />;
+}, () => true);
+
+// ---------------------------------------------------------------------------
 // IPodScreen (root export)
 // ---------------------------------------------------------------------------
 
@@ -657,26 +632,29 @@ export function IPodScreen({
       <StatusBar
         view={view}
         isPlaying={playerState.status === 'playing'}
+        isLoading={playerState.status === 'loading'}
         socketStatus={socketStatus}
         isRoom={isRoom}
       />
       <div className="lcd-content" style={{ position: 'relative' }}>
-        {/* Persistent YouTube container */}
+        {/* Persistent YouTube container — height is controlled by .lcd-yt-container in CSS */}
         <div 
-          id="youtube-player-container" 
+          className="lcd-yt-container"
           style={{
             position: 'absolute',
             top: '0',
             left: '0',
             width: '100%',
-            height: '140px',
+            height: '100%',
             zIndex: 10,
             // Hide it if we are not in nowPlaying or if there is no song loaded
             opacity: (view === 'nowPlaying' && playerState.song) ? 1 : 0,
             pointerEvents: (view === 'nowPlaying' && playerState.song) ? 'auto' : 'none',
           }}
-        />
-        <div style={{ paddingTop: (view === 'nowPlaying' && playerState.song) ? '148px' : '0' }}>
+        >
+          <YouTubeContainer />
+        </div>
+        <div style={{ height: '100%' }}>
           {renderContent()}
         </div>
       </div>

@@ -39,12 +39,13 @@ playlistRouter.get("/:id/playlist", requireParticipant, async (req, res) => {
       song: {
         select: {
           id: true,
+          provider: true,
+          externalId: true,
           title: true,
           artist: true,
           album: true,
           duration: true,
           coverUrl: true,
-          audioUrl: true,
         },
       },
     },
@@ -104,12 +105,13 @@ playlistRouter.post("/:id/playlist", requireParticipant, async (req, res) => {
       song: {
         select: {
           id: true,
+          provider: true,
+          externalId: true,
           title: true,
           artist: true,
           album: true,
           duration: true,
           coverUrl: true,
-          audioUrl: true,
         },
       },
     },

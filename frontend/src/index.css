@@ -572,7 +572,8 @@ html, body, #root {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 400px;
+  /* Fluid: never wider than the viewport, capped at 400px */
+  width: min(400px, calc(100vw - 32px));
   background: var(--ipod-body);
   border: 1px solid var(--ipod-edge);
   border-radius: 44px;
@@ -617,7 +618,7 @@ html, body, #root {
   background: var(--lcd-bg);
   border-radius: 8px;
   width: 100%;
-  aspect-ratio: 3/2;
+  aspect-ratio: 1/1;
   overflow: hidden;
   position: relative;
   font-family: 'IBM Plex Mono', monospace;
@@ -680,6 +681,27 @@ html, body, #root {
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+}
+
+/* YouTube video slot inside the LCD — scales with the screen width */
+:root {
+  --lcd-yt-height: 140px;
+  --lcd-yt-height-offset: 148px; /* height + 8px gap */
+}
+.lcd-yt-container {
+  height: 100%;
+}
+@media (max-width: 480px) {
+  :root {
+    --lcd-yt-height: 110px;
+    --lcd-yt-height-offset: 118px;
+  }
+}
+@media (max-width: 360px) {
+  :root {
+    --lcd-yt-height: 90px;
+    --lcd-yt-height-offset: 98px;
+  }
 }
 
 /* ── Menu view ──────────────────────────────────────────────────────────────── */
@@ -1133,12 +1155,20 @@ html, body, #root {
 }
 
 @media (max-width: 480px) {
-  .ipod { width: 320px; border-radius: 38px; padding: 22px 22px 32px; }
+  .ipod { width: min(320px, calc(100vw - 24px)); border-radius: 38px; padding: 22px 22px 32px; }
   .click-wheel { width: 175px; height: 175px; }
   .wheel-center-btn { inset: 50px; }
   .wheel-inner-cutout { inset: 26px; }
   .ipod-body-space { height: 20px; }
   .ipod-zone { padding: 12px 12px 80px; }
+}
+
+/* Very small phones (≤360px) */
+@media (max-width: 360px) {
+  .ipod { border-radius: 32px; padding: 18px 18px 28px; }
+  .click-wheel { width: 150px; height: 150px; }
+  .wheel-center-btn { inset: 42px; }
+  .wheel-inner-cutout { inset: 22px; }
 }
 
 /* ── Utility ─────────────────────────────────────────────────────────────────── */

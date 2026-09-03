@@ -20,6 +20,7 @@ import {
   getRoomDetail,
   leaveRoom,
   fetchPlaylist,
+  fetchMessages,
   addToPlaylist,
   computeLivePosition,
   ApiError,
@@ -171,6 +172,21 @@ export function RoomPage() {
     void load();
   }, [pageStatus, identity]);
 
+  // ── 3b. Chat history fetch ────────────────────────────────────────────────
+  const seedMessagesRef = useRef<((msgs: import('../lib/useRoomSocket').ChatMessageRecord[]) => void) | null>(null);
+  useEffect(() => {
+    if (pageStatus !== 'ready' || !identity) return;
+    const load = async () => {
+      try {
+        const data = await fetchMessages(identity.roomId, identity.id);
+        seedMessagesRef.current?.(data.messages);
+      } catch (err) {
+        console.warn('[room] message history fetch failed', err);
+      }
+    };
+    void load();
+  }, [pageStatus, identity]);
+
   // ── 4. WebSocket ──────────────────────────────────────────────────────────
   const handleFatalClose = useCallback((reason: string) => {
     setErrorMsg(reason);
@@ -179,7 +195,7 @@ export function RoomPage() {
 
   const isReady = pageStatus === 'ready' && identity !== null;
 
-  const { roomState, socketStatus, send, livePlayback, seedPlaylist, isHydrated } = useRoomSocket(
+  const { roomState, socketStatus, send, livePlayback, seedPlaylist, seedMessages, isHydrated } = useRoomSocket(
     isReady
       ? { roomId: identity!.roomId, participantId: identity!.id, onFatalClose: handleFatalClose, resolveSong }
       : { roomId: '', participantId: '', onFatalClose: handleFatalClose, resolveSong },
@@ -188,6 +204,9 @@ export function RoomPage() {
   useEffect(() => {
     seedPlaylistRef.current = seedPlaylist;
   }, [seedPlaylist]);
+  useEffect(() => {
+    seedMessagesRef.current = seedMessages;
+  }, [seedMessages]);
   useEffect(() => {
     playlistRef.current = roomState.playlist;
   }, [roomState.playlist]);
@@ -218,14 +237,22 @@ export function RoomPage() {
       const player = playerRef.current;
       if (!player) return;
       const state = player.getState();
-      if (state.status !== 'playing') return;
       const expected = computeLivePosition(livePlayback);
+      
+      // If room is playing but local player is paused (e.g. browser autoplay block), force play
+      if (state.status !== 'playing' && state.status !== 'loading') {
+        player.syncTo(expected, true);
+        return;
+      }
+      
+      if (state.status !== 'playing') return;
+      
       if (Math.abs(state.positionSecs - expected) > DRIFT_THRESHOLD_SECS) {
         player.syncTo(expected, true);
       }
     }, DRIFT_CHECK_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [livePlayback]);
+  }, [livePlayback, isHydrated]);
 
   // ── 7. Derive isHost ──────────────────────────────────────────────────────
   const isHost = (() => {
@@ -270,7 +297,9 @@ export function RoomPage() {
     setAddingId(songId);
     try {
       const res = await addToPlaylist(identity.roomId, songId, identity.id);
-      if (isHost && playerState.status === 'idle') {
+      // If HOST and no song is currently loaded, start playing the added song immediately.
+      // If a song is already playing (or paused), just leave it in the playlist.
+      if (isHost && !livePlayback.currentSong) {
         send('SET_SONG', { entryId: res.entry.id });
         send('PLAY', { positionSecs: 0 });
       }
@@ -279,7 +308,7 @@ export function RoomPage() {
     } finally {
       setAddingId(null);
     }
-  }, [identity, isHost, playerState.status, send]);
+  }, [identity, isHost, livePlayback.currentSong, send]);
 
   const handleSetSong = useCallback((entryId: string) => {
     if (!isHost) return;

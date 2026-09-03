@@ -7,10 +7,29 @@ export interface YouTubePlayerOptions {
   onError?: (error: number) => void;
 }
 
+// ---------------------------------------------------------------------------
+// YouTubePlayerAdapter
+//
+// One instance per AudioPlayer. Each mounted iPod gets its own adapter and
+// its own YT.Player attached to its #youtube-player-container element.
+//
+// StrictMode safety: React runs effects twice in development (mount →
+// cleanup → mount). The first adapter is destroyed during cleanup, and the
+// second is created fresh. This is correct — the first YT.Player.destroy()
+// call removes the iframe so the second new YT.Player() gets a clean div.
+// The `destroyed` flag prevents any API calls on a stale instance.
+//
+// The pendingVideo queue handles the case where loadVideoById() is called
+// before onReady fires (which happens when the adapter is created and
+// loadSong() arrives before the YT iframe has initialised). handleReady()
+// consumes the queue exactly once.
+// ---------------------------------------------------------------------------
+
 export class YouTubePlayerAdapter {
   private player: any = null;
   private options: YouTubePlayerOptions;
   private isReady = false;
+  private destroyed = false;
   private pendingVideo: { videoId: string; startSeconds: number; autoplay: boolean } | null = null;
   private pendingVolume: number | null = null;
 
@@ -26,7 +45,9 @@ export class YouTubePlayerAdapter {
       const originalCallback = window.onYouTubeIframeAPIReady;
       window.onYouTubeIframeAPIReady = () => {
         if (originalCallback) originalCallback();
-        this.createPlayer();
+        if (!this.destroyed) {
+          this.createPlayer();
+        }
       };
     }
   }
@@ -43,19 +64,18 @@ export class YouTubePlayerAdapter {
         modestbranding: 1,
         rel: 0,
         showinfo: 0,
-        iv_load_policy: 3
+        iv_load_policy: 3,
       },
       events: {
         onReady: this.handleReady.bind(this),
         onStateChange: this.handleStateChange.bind(this),
-        onError: this.handleError.bind(this)
-      }
+        onError: this.handleError.bind(this),
+      },
     });
   }
 
   private handleReady(event: any) {
-    // Reassign from event.target — YT.Player's onReady can fire before
-    // new YT.Player(...) returns in some environments, leaving this.player null.
+    if (this.destroyed) return;
     this.player = event.target;
     this.isReady = true;
     if (this.pendingVolume !== null) {
@@ -75,13 +95,14 @@ export class YouTubePlayerAdapter {
   }
 
   private handleStateChange(event: any) {
+    if (this.destroyed) return;
     const stateMap: Record<number, YTPlayerState> = {
       [-1]: 'unstarted',
       0: 'ended',
       1: 'playing',
       2: 'paused',
       3: 'buffering',
-      5: 'cued'
+      5: 'cued',
     };
     const state = stateMap[event.data];
     if (state) {
@@ -90,10 +111,12 @@ export class YouTubePlayerAdapter {
   }
 
   private handleError(event: any) {
+    if (this.destroyed) return;
     this.options.onError?.(event.data);
   }
 
-  loadVideoById(videoId: string, startSeconds: number = 0, autoplay: boolean = true) {
+  loadVideoById(videoId: string, startSeconds = 0, autoplay = true) {
+    if (this.destroyed) return;
     if (!this.isReady) {
       this.pendingVideo = { videoId, startSeconds, autoplay };
       return;
@@ -106,26 +129,34 @@ export class YouTubePlayerAdapter {
   }
 
   play() {
-    if (this.isReady && this.player.playVideo) {
-      this.player.playVideo();
+    if (this.destroyed) return;
+    if (this.isReady && this.player?.playVideo) {
+      try {
+        this.player.playVideo();
+      } catch (e) {
+        console.warn('[YTAdapter] play() threw:', e);
+      }
     }
   }
 
   pause() {
-    if (this.isReady && this.player.pauseVideo) {
+    if (this.destroyed) return;
+    if (this.isReady && this.player?.pauseVideo) {
       this.player.pauseVideo();
     }
   }
 
   seekTo(seconds: number) {
-    if (this.isReady && this.player.seekTo) {
+    if (this.destroyed) return;
+    if (this.isReady && this.player?.seekTo) {
       this.player.seekTo(seconds, true);
     }
   }
 
-  setVolume(volume: number) { // 0 to 1
+  setVolume(volume: number) {
+    if (this.destroyed) return;
     const ytVolume = Math.round(volume * 100);
-    if (this.isReady && this.player.setVolume) {
+    if (this.isReady && this.player?.setVolume) {
       this.player.setVolume(ytVolume);
     } else {
       this.pendingVolume = ytVolume;
@@ -133,19 +164,29 @@ export class YouTubePlayerAdapter {
   }
 
   getCurrentTime(): number {
-    return this.isReady && this.player.getCurrentTime ? this.player.getCurrentTime() : 0;
+    if (this.destroyed) return 0;
+    return this.isReady && this.player?.getCurrentTime ? this.player.getCurrentTime() : 0;
   }
 
   getDuration(): number {
-    return this.isReady && this.player.getDuration ? this.player.getDuration() : 0;
+    if (this.destroyed) return 0;
+    return this.isReady && this.player?.getDuration ? this.player.getDuration() : 0;
   }
 
   destroy() {
-    if (this.isReady && this.player.destroy) {
-      this.player.destroy();
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.isReady = false;
+    this.pendingVideo = null;
+    if (this.player?.destroy) {
+      try {
+        this.player.destroy();
+      } catch {
+        // YT.Player.destroy() can throw if the iframe was already removed
+        // from the DOM (e.g. route change unmounted the container first).
+      }
     }
     this.player = null;
-    this.isReady = false;
   }
 }
 

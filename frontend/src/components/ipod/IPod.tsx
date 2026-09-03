@@ -492,12 +492,24 @@ export function IPod({
   // Song selection in songs view — works differently for room vs solo
   const handleSongSelect = useCallback((song: Song, index: number) => {
     dispatch({ type: 'ROTATE', delta: index - state.songIndex, listLength: songs.length });
-    if (isRoom) {
-      onAddSong?.(song.id);
-    } else {
-      // Solo: pass the full songs queue to the parent so it can loadQueue
-      onSoloSongSelect?.(song, songs, index);
-    }
+    const runImport = async () => {
+      try {
+        let actualSong = song;
+        // YouTube search results have a temporary id prefixed with 'youtube_'.
+        // Import them into the canonical Song table before using the id.
+        if (song.provider === 'youtube' && song.id.startsWith('youtube_')) {
+          actualSong = await importSong(song.provider, song.externalId);
+        }
+        if (isRoom) {
+          onAddSong?.(actualSong.id);
+        } else {
+          onSoloSongSelect?.(actualSong, songs.map(s => s.id === song.id ? actualSong : s), index);
+        }
+      } catch (err) {
+        console.error('Failed to import song', err);
+      }
+    };
+    runImport();
   }, [state.songIndex, songs, isRoom, onAddSong, onSoloSongSelect]);
 
   // ---------------------------------------------------------------------------

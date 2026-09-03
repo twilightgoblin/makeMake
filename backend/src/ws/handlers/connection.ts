@@ -114,7 +114,7 @@ export async function handleConnection(
     where: { id: roomId },
     include: {
       currentSong: {
-        select: { id: true, title: true, artist: true, album: true, duration: true, coverUrl: true, audioUrl: true },
+        select: { id: true, provider: true, externalId: true, title: true, artist: true, album: true, duration: true, coverUrl: true },
       },
       participants: {
         where: { leftAt: null },
@@ -217,12 +217,13 @@ export async function handleConnection(
       currentSong: room.currentSong
         ? {
             id: room.currentSong.id,
+            provider: room.currentSong.provider,
+            externalId: room.currentSong.externalId,
             title: room.currentSong.title,
             artist: room.currentSong.artist,
             album: room.currentSong.album,
             duration: room.currentSong.duration,
             coverUrl: room.currentSong.coverUrl,
-            audioUrl: room.currentSong.audioUrl,
           }
         : null,
       isPlaying: room.isPlaying,

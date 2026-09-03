@@ -128,6 +128,7 @@ type RoomAction =
   | { type: 'PLAYLIST_REMOVE'; payload: { entryId: string; playlist: Array<{ id: string; position: number }> } }
   | { type: 'PLAYLIST_REORDER'; payload: { entryId: string; playlist: Array<{ id: string; position: number }> } }
   | { type: 'SEED_PLAYLIST'; playlist: PlaylistEntry[] }
+  | { type: 'SEED_MESSAGES'; messages: ChatMessageRecord[] }
   | { type: 'CHAT_MESSAGE'; payload: ChatMessageRecord }
   | { type: 'ROOM_CLOSED' }
   | { type: 'RESET' };
@@ -302,6 +303,19 @@ function reducer(state: RoomState, action: RoomAction): RoomState {
     case 'SEED_PLAYLIST':
       return { ...state, playlist: action.playlist };
 
+    case 'SEED_MESSAGES':
+      // Seed historical messages; deduplicate against any that arrived via WS
+      // before the HTTP fetch completed (race window on slow connections).
+      return {
+        ...state,
+        messages: [
+          ...action.messages,
+          ...state.messages.filter(
+            (m) => !action.messages.some((h) => h.id === m.id),
+          ),
+        ],
+      };
+
     case 'CHAT_MESSAGE':
       // Deduplicate by id (sender receives their own broadcast)
       if (state.messages.some((m) => m.id === action.payload.id)) {
@@ -376,6 +390,12 @@ interface UseRoomSocketReturn {
    * from WS events (PLAYLIST_ADD/REMOVE/REORDER).
    */
   seedPlaylist: (entries: PlaylistEntry[]) => void;
+  /**
+   * Seed chat history from the initial HTTP fetch. Should be called once
+   * after messages are loaded from the API. New messages arrive via WS
+   * CHAT_MESSAGE events; the reducer deduplicates any overlap.
+   */
+  seedMessages: (messages: ChatMessageRecord[]) => void;
   isHydrated: boolean;
 }
 
@@ -592,12 +612,17 @@ export function useRoomSocket({
     dispatch({ type: 'SEED_PLAYLIST', playlist: entries });
   }, []);
 
+  const seedMessages = useCallback((messages: ChatMessageRecord[]) => {
+    dispatch({ type: 'SEED_MESSAGES', messages });
+  }, []);
+
   return {
     roomState,
     socketStatus,
     send,
     livePlayback: roomState.playback,
     seedPlaylist,
+    seedMessages,
     isHydrated,
   };
 }
