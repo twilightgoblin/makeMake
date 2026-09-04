@@ -35,12 +35,13 @@ exports.roomDetailRouter.get("/:id", requireParticipant_js_1.requireParticipant,
             currentSong: {
                 select: {
                     id: true,
+                    provider: true,
+                    externalId: true,
                     title: true,
                     artist: true,
                     album: true,
                     duration: true,
                     coverUrl: true,
-                    audioUrl: true,
                 },
             },
             participants: {

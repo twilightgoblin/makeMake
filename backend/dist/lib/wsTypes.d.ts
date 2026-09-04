@@ -22,6 +22,7 @@ export type PreviousPayload = Record<string, never>;
 /** SET_SONG — HOST jumps directly to a specific playlist entry */
 export interface SetSongPayload {
     entryId: string;
+    play?: boolean;
 }
 export interface PlaylistAddPayload {
     songId: string;
@@ -49,12 +50,13 @@ export interface ParticipantSummary {
 }
 export interface PlaybackSongSummary {
     id: string;
+    provider: string;
+    externalId: string;
     title: string;
     artist: string;
     album: string | null;
     duration: number;
     coverUrl: string;
-    audioUrl: string;
 }
 export interface PlaybackState {
     currentSong: PlaybackSongSummary | null;
@@ -97,12 +99,13 @@ export interface PlaylistAddBroadcastPayload {
         addedAt: ISOTimestamp;
         song: {
             id: string;
+            provider: string;
+            externalId: string;
             title: string;
             artist: string;
             album: string | null;
             duration: number;
             coverUrl: string;
-            audioUrl: string;
         };
     };
 }

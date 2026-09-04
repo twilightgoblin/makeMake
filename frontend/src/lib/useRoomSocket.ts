@@ -429,6 +429,9 @@ export function useRoomSocket({
 }: UseRoomSocketOptions): UseRoomSocketReturn {
   const [roomState, dispatch] = useReducer(reducer, INITIAL_ROOM_STATE);
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const backoffRef = useRef(1000);
+  const isUnmountedRef = useRef(false);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('connecting');
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -444,22 +447,33 @@ export function useRoomSocket({
 
 
   useEffect(() => {
+    isUnmountedRef.current = false;
     if (!roomId || !participantId) return;
 
     dispatch({ type: 'RESET' });
     setSocketStatus('connecting');
     setIsHydrated(false);
+    backoffRef.current = 1000;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     const url = `${protocol}//${host}/ws?participantId=${encodeURIComponent(participantId)}&roomId=${encodeURIComponent(roomId)}`;
 
-    const ws = new WebSocket(url);
-    socketRef.current = ws;
+    function connect() {
+      if (isUnmountedRef.current) return;
+      
+      setSocketStatus('connecting');
+      const ws = new WebSocket(url);
+      socketRef.current = ws;
 
-    ws.onopen = () => {
-      setSocketStatus('open');
-    };
+      ws.onopen = () => {
+        if (isUnmountedRef.current) {
+          ws.close(1000, 'Component unmounted');
+          return;
+        }
+        setSocketStatus('open');
+        backoffRef.current = 1000;
+      };
 
     ws.onmessage = (event) => {
       let envelope: WsServerEnvelope;
@@ -591,17 +605,38 @@ export function useRoomSocket({
     };
 
     ws.onerror = () => {
-      setSocketStatus('error');
-    };
-
-    ws.onclose = (event) => {
-      setSocketStatus('closed');
-      if (event.code === 1008) {
-        onFatalCloseRef.current?.(event.reason || 'Connection refused.');
+      if (!isUnmountedRef.current && socketRef.current === ws) {
+        setSocketStatus('error');
       }
     };
 
-    return () => {
+    ws.onclose = (event) => {
+      if (isUnmountedRef.current || socketRef.current !== ws) return;
+      
+      setSocketStatus('closed');
+      
+      if (event.code === 1008) {
+        onFatalCloseRef.current?.(event.reason || 'Connection refused.');
+        return;
+      }
+      
+      const delay = backoffRef.current;
+      backoffRef.current = Math.min(delay * 2, 16000);
+      
+      console.log(`[ws] Reconnecting in ${delay}ms... (code: ${event.code})`);
+      reconnectTimeoutRef.current = setTimeout(connect, delay);
+    };
+  }
+
+  connect();
+
+  return () => {
+    isUnmountedRef.current = true;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+    const ws = socketRef.current;
+    if (ws) {
       ws.onopen = null;
       ws.onmessage = null;
       ws.onerror = null;
@@ -613,8 +648,9 @@ export function useRoomSocket({
         ws.close(1000, 'Component unmounted');
       }
       socketRef.current = null;
-    };
-  }, [roomId, participantId, setSocketStatus]);
+    }
+  };
+}, [roomId, participantId]);
 
   const send = useCallback(
     <T>(type: WsClientEventType, payload: T, requestId?: string) => {

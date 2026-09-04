@@ -16,6 +16,8 @@ const express_1 = require("express");
 const prisma_js_1 = require("../lib/prisma.js");
 const requireParticipant_js_1 = require("../middleware/requireParticipant.js");
 const errors_js_1 = require("../lib/errors.js");
+const roomEvents_js_1 = require("../lib/roomEvents.js");
+const wsTypes_js_1 = require("../lib/wsTypes.js");
 exports.playlistRouter = (0, express_1.Router)();
 // ---------------------------------------------------------------------------
 // GET /rooms/:id/playlist
@@ -36,12 +38,13 @@ exports.playlistRouter.get("/:id/playlist", requireParticipant_js_1.requireParti
             song: {
                 select: {
                     id: true,
+                    provider: true,
+                    externalId: true,
                     title: true,
                     artist: true,
                     album: true,
                     duration: true,
                     coverUrl: true,
-                    audioUrl: true,
                 },
             },
         },
@@ -93,16 +96,36 @@ exports.playlistRouter.post("/:id/playlist", requireParticipant_js_1.requirePart
             song: {
                 select: {
                     id: true,
+                    provider: true,
+                    externalId: true,
                     title: true,
                     artist: true,
                     album: true,
                     duration: true,
                     coverUrl: true,
-                    audioUrl: true,
                 },
             },
         },
     });
+    const broadcast = {
+        entry: {
+            id: entry.id,
+            position: entry.position,
+            addedById: entry.addedById,
+            addedAt: entry.addedAt.toISOString(),
+            song: {
+                id: entry.song.id,
+                provider: entry.song.provider,
+                externalId: entry.song.externalId,
+                title: entry.song.title,
+                artist: entry.song.artist,
+                album: entry.song.album,
+                duration: entry.song.duration,
+                coverUrl: entry.song.coverUrl,
+            },
+        },
+    };
+    await (0, roomEvents_js_1.publishRoomEvent)(roomId, (0, wsTypes_js_1.makeServerEvent)("PLAYLIST_ADD", broadcast));
     res.status(201).json({ entry });
 });
 // ---------------------------------------------------------------------------
@@ -138,6 +161,16 @@ exports.playlistRouter.delete("/:id/playlist/:entryId", requireParticipant_js_1.
           AND position > ${entry.position}
       `;
     });
+    const updatedPlaylist = await prisma_js_1.prisma.playlistEntry.findMany({
+        where: { roomId },
+        orderBy: { position: "asc" },
+        select: { id: true, position: true },
+    });
+    const broadcast = {
+        entryId,
+        playlist: updatedPlaylist,
+    };
+    await (0, roomEvents_js_1.publishRoomEvent)(roomId, (0, wsTypes_js_1.makeServerEvent)("PLAYLIST_REMOVE", broadcast));
     res.json({ deleted: { id: entryId } });
 });
 // ---------------------------------------------------------------------------
@@ -223,6 +256,16 @@ exports.playlistRouter.patch("/:id/playlist/:entryId/position", requireParticipa
         WHERE id = ${entryId}
       `;
     });
-    res.json({ entry: { id: entryId, position: targetPosition } });
+    const updatedPlaylist = await prisma_js_1.prisma.playlistEntry.findMany({
+        where: { roomId },
+        orderBy: { position: "asc" },
+        select: { id: true, position: true },
+    });
+    const broadcast = {
+        entryId,
+        playlist: updatedPlaylist,
+    };
+    await (0, roomEvents_js_1.publishRoomEvent)(roomId, (0, wsTypes_js_1.makeServerEvent)("PLAYLIST_REORDER", broadcast));
+    res.json({ entry: { id: entry.id, position: targetPosition } });
 });
 //# sourceMappingURL=playlist.js.map

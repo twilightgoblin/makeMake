@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { createServer } from "http";
 import { prisma } from "./lib/prisma.js";
 import { attachWebSocketServer, closeAllWebSockets } from "./ws/server.js";
 import { subscribeRoomEvents } from "./lib/roomEvents.js";
@@ -101,9 +102,13 @@ app.use("/rooms", presenceRouter);
 // ----------------------------------------------------------------------------
 app.use(errorHandler);
 
-const httpServer = app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+const httpServer = createServer(app);
+
+if (!process.env.VERCEL) {
+  httpServer.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
 
 attachWebSocketServer(httpServer);
 subscribeRoomEvents();
@@ -170,3 +175,5 @@ async function gracefulShutdown(signal: string) {
 
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+export default httpServer;

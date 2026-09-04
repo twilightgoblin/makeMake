@@ -196,12 +196,13 @@ async function handleSetSong(socket, roomId, envelope) {
         return;
     }
     const now = new Date();
+    const isPlaying = payload.play === true;
     const updated = await prisma_js_1.prisma.room.update({
         where: { id: roomId },
         data: {
             currentSongId: entry.songId,
             positionSecs: 0,
-            isPlaying: false,
+            isPlaying,
             stateUpdatedAt: now,
         },
         select: { isPlaying: true },
@@ -209,7 +210,7 @@ async function handleSetSong(socket, roomId, envelope) {
     const broadcast = {
         songId: entry.songId,
         positionSecs: 0,
-        isPlaying: false,
+        isPlaying,
         stateUpdatedAt: now.toISOString(),
     };
     // Reuse NEXT event type on the wire — same payload shape, clients handle it identically.

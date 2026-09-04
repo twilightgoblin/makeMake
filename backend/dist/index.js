@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReady = isReady;
 require("dotenv/config");
 const express_1 = __importDefault(require("express"));
+const http_1 = require("http");
 const prisma_js_1 = require("./lib/prisma.js");
 const server_js_1 = require("./ws/server.js");
 const roomEvents_js_1 = require("./lib/roomEvents.js");
@@ -94,9 +95,12 @@ app.use("/rooms", presence_js_1.presenceRouter);
 // Global error handler — must be last
 // ----------------------------------------------------------------------------
 app.use(errorHandler_js_1.errorHandler);
-const httpServer = app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-});
+const httpServer = (0, http_1.createServer)(app);
+if (!process.env.VERCEL) {
+    httpServer.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
 (0, server_js_1.attachWebSocketServer)(httpServer);
 (0, roomEvents_js_1.subscribeRoomEvents)();
 // Track whether async startup tasks have completed.
@@ -151,4 +155,5 @@ async function gracefulShutdown(signal) {
 }
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+exports.default = httpServer;
 //# sourceMappingURL=index.js.map

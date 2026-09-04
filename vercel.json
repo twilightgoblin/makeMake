@@ -1,0 +1,18 @@
+{
+  "services": {
+    "frontend": {
+      "root": "frontend/"
+    },
+    "backend": {
+      "root": "backend/"
+    }
+  },
+  "rewrites": [
+    { "source": "/ws", "destination": { "service": "backend" } },
+    { "source": "/health", "destination": { "service": "backend" } },
+    { "source": "/ready", "destination": { "service": "backend" } },
+    { "source": "/songs(.*)", "destination": { "service": "backend" } },
+    { "source": "/rooms(.*)", "destination": { "service": "backend" } },
+    { "source": "/(.*)", "destination": { "service": "frontend" } }
+  ]
+}

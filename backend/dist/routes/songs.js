@@ -48,7 +48,6 @@ exports.songsRouter.get("/", async (req, res) => {
                 album: true,
                 duration: true,
                 coverUrl: true,
-                audioUrl: true,
             },
         }),
         prisma_js_1.prisma.song.count({ where }),
@@ -131,6 +130,10 @@ exports.songsRouter.post("/import", async (req, res) => {
         res.json(song);
     }
     catch (err) {
+        if (err instanceof Error && err.message === "VIDEO_NOT_EMBEDDABLE") {
+            res.status(400).json({ error: "VIDEO_NOT_EMBEDDABLE", message: "This video cannot be embedded and will not play in MakeMake." });
+            return;
+        }
         console.error("Import error:", err);
         res.status(500).json({ error: "Failed to import song" });
     }

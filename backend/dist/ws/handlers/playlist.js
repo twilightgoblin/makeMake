@@ -63,7 +63,7 @@ async function handleAdd(socket, participantId, roomId, envelope) {
             addedById: true,
             addedAt: true,
             song: {
-                select: { id: true, title: true, artist: true, album: true, duration: true, coverUrl: true, audioUrl: true },
+                select: { id: true, provider: true, externalId: true, title: true, artist: true, album: true, duration: true, coverUrl: true },
             },
         },
     });
