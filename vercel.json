@@ -9,15 +9,18 @@
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "src/index.ts"
+      "framework": "express",
+      "entrypoint": "src/index.ts",
+      "installCommand": "npm install",
+      "buildCommand": "npx prisma generate"
     }
   },
   "rewrites": [
-    { "source": "/ws", "destination": { "service": "backend" } },
-    { "source": "/health", "destination": { "service": "backend" } },
-    { "source": "/ready", "destination": { "service": "backend" } },
+    { "source": "/ws",       "destination": { "service": "backend" } },
+    { "source": "/health",   "destination": { "service": "backend" } },
+    { "source": "/ready",    "destination": { "service": "backend" } },
     { "source": "/songs(.*)", "destination": { "service": "backend" } },
     { "source": "/rooms(.*)", "destination": { "service": "backend" } },
-    { "source": "/(.*)", "destination": { "service": "frontend" } }
+    { "source": "/(.*)",     "destination": { "service": "frontend" } }
   ]
 }
