@@ -4,5 +4,8 @@
   "workspaces": [
     "frontend",
     "backend"
-  ]
+  ],
+  "engines": {
+    "node": "20.x"
+  }
 }
