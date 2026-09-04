@@ -2,13 +2,13 @@
 
 Makemake is a real-time collaborative music player. Create a room, share a six-character code, and every participant hears the same track at the same moment — with shared playlist control and live chat.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://make-make-git-main-goblintwilight-gmailcoms-projects.vercel.app)
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?logo=vercel)](https://make-make-two.vercel.app)
 [![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](#license)
 [![Node.js 20](https://img.shields.io/badge/Node.js-20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 
-**Live:** https://make-make-git-main-goblintwilight-gmailcoms-projects.vercel.app
+**Live:** [make-make-two.vercel.app](https://make-make-two.vercel.app)
 
 ---
 
