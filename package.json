@@ -1,0 +1,8 @@
+{
+  "name": "makemake",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ]
+}
