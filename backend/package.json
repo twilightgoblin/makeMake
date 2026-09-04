@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:1": "PORT=3000 tsx watch src/index.ts",
     "dev:2": "PORT=3001 tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "seed": "tsx prisma/seed.ts",
     "test": "vitest run",
