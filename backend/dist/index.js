@@ -4,7 +4,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isReady = isReady;
-require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const http_1 = require("http");
 const prisma_js_1 = require("./lib/prisma.js");
