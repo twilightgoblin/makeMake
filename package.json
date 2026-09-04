@@ -1,5 +1,28 @@
 {
   "name": "makemake",
+  "description": "Real-time collaborative music player — listen together in sync with shared playlist, live chat, and YouTube integration",
+  "keywords": [
+    "music-player",
+    "collaborative",
+    "real-time",
+    "websocket",
+    "react",
+    "nodejs",
+    "youtube",
+    "redis",
+    "prisma",
+    "postgresql",
+    "social",
+    "sync",
+    "ipod",
+    "room",
+    "chat",
+    "playlist",
+    "typescript",
+    "vite",
+    "express",
+    "full-stack"
+  ],
   "private": true,
   "workspaces": [
     "frontend",
